@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
-type RevenuePost = { id: string; title: string; amount: number; content: string; created_at: string; likes: number; views: number };
+type RevenuePost = { id: string; title: string; amount: number; content: string; created_at: string; likes: number; views: number; image_url: string | null };
 
 const PAGE_SIZE = 15;
 
@@ -43,6 +43,10 @@ export default function RevenuePage() {
         <div className="grid md:grid-cols-2 gap-4">
           {posts.map((p) => (
             <div key={p.id} className="border border-border p-5">
+              {p.image_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.image_url} alt="" className="w-full h-40 object-cover mb-3" />
+              )}
               <div className="text-xs text-neutral-400 mb-2">김**님 · {new Date(p.created_at).toLocaleDateString('ko-KR')}</div>
               <h3 className="font-black mb-1">{p.title}</h3>
               <div className="text-lg font-black text-blue-600 mb-2">₩{p.amount.toLocaleString()}</div>

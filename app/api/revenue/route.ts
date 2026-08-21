@@ -34,7 +34,13 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from('ut_revenue_posts')
-    .insert({ user_id: user.id, title: body.title, amount: Number(body.amount), content: body.content || '' })
+    .insert({
+      user_id: user.id,
+      title: body.title,
+      amount: Number(body.amount),
+      content: body.content || '',
+      image_url: body.image_url || null,
+    })
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
