@@ -5,14 +5,23 @@ import Link from 'next/link';
 
 type RevenuePost = { id: string; title: string; amount: number; content: string; created_at: string; likes: number; views: number };
 
+const PAGE_SIZE = 15;
+
 export default function RevenuePage() {
   const [posts, setPosts] = useState<RevenuePost[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    fetch('/api/revenue')
+    fetch(`/api/revenue?page=${page}`)
       .then((r) => r.json())
-      .then((d) => setPosts(d.posts || []));
-  }, []);
+      .then((d) => {
+        setPosts(d.posts || []);
+        setTotal(d.total || 0);
+      });
+  }, [page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div>
@@ -43,6 +52,20 @@ export default function RevenuePage() {
                 <span>좋아요 {p.likes}</span>
               </div>
             </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-8">
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={`w-8 h-8 text-xs font-bold ${page === n ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+            >
+              {n}
+            </button>
           ))}
         </div>
       )}

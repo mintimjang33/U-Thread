@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 const CONTENT_TYPES = [
@@ -46,6 +46,20 @@ export default function MultiEditorPage() {
   const [googleSearch, setGoogleSearch] = useState(true);
   const [threadSegments, setThreadSegments] = useState(1);
   const [relayDelay, setRelayDelay] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/editor-defaults')
+      .then((r) => r.json())
+      .then((d) => {
+        const def = d.defaults;
+        if (!def) return;
+        setVisionAnalysis(def.vision_analysis);
+        setGoogleSearch(def.google_search);
+        setThreadSegments(def.thread_segments);
+        setRelayDelay(def.relay_delay);
+      })
+      .catch(() => {});
+  }, []);
 
   const copy = TEXTAREA_COPY[contentType];
 

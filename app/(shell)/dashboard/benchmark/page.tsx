@@ -2,48 +2,144 @@
 
 import { useEffect, useState } from 'react';
 
-type BenchmarkItem = { id: string; source: string; content: string; created_at: string };
+type Folder = { id: string; name: string };
+type BenchmarkItem = { id: string; source: string; content: string; media_url: string | null; folder_id: string | null; created_at: string };
 
 export default function BenchmarkPage() {
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolder, setActiveFolder] = useState<'all' | 'unfiled' | string>('all');
   const [items, setItems] = useState<BenchmarkItem[]>([]);
   const [search, setSearch] = useState('');
-  const [showModal, setShowModal] = useState(false);
+
+  const [showManual, setShowManual] = useState(false);
+  const [showScrape, setShowScrape] = useState(false);
+  const [showFolders, setShowFolders] = useState(false);
+
   const [source, setSource] = useState('');
   const [content, setContent] = useState('');
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [manualFolder, setManualFolder] = useState('');
   const [saving, setSaving] = useState(false);
 
-  function load() {
-    fetch('/api/benchmark')
+  const [scrapeUrl, setScrapeUrl] = useState('');
+  const [scrapeFolder, setScrapeFolder] = useState('');
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [scraping, setScraping] = useState(false);
+
+  const [newFolderName, setNewFolderName] = useState('');
+
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function loadFolders() {
+    fetch('/api/benchmark/folders')
       .then((r) => r.json())
-      .then((d) => setItems(d.items || []))
-      .catch(() => {});
+      .then((d) => setFolders(d.folders || []));
+  }
+
+  function loadItems(folderId: typeof activeFolder) {
+    const q = folderId === 'all' ? '' : `?folder_id=${folderId}`;
+    fetch(`/api/benchmark${q}`)
+      .then((r) => r.json())
+      .then((d) => setItems(d.items || []));
   }
 
   useEffect(() => {
-    load();
+    loadFolders();
   }, []);
 
-  async function handleSave() {
+  useEffect(() => {
+    loadItems(activeFolder);
+    setSelected(new Set());
+  }, [activeFolder]);
+
+  async function handleManualSave() {
     if (!content.trim()) return;
     setSaving(true);
     try {
+      let media_url: string | undefined;
+      if (mediaFile) {
+        const fd = new FormData();
+        fd.append('file', mediaFile);
+        const up = await fetch('/api/upload', { method: 'POST', body: fd }).then((r) => r.json());
+        media_url = up.url;
+      }
       await fetch('/api/benchmark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source, content }),
+        body: JSON.stringify({ source, content, folder_id: manualFolder || null, media_url }),
       });
       setSource('');
       setContent('');
-      setShowModal(false);
-      load();
+      setMediaFile(null);
+      setManualFolder('');
+      setShowManual(false);
+      loadItems(activeFolder);
     } finally {
       setSaving(false);
     }
   }
 
-  const filtered = items.filter(
-    (it) => it.content.includes(search) || it.source.includes(search)
-  );
+  async function handleScrape() {
+    if (!scrapeUrl.trim()) return;
+    setScraping(true);
+    setScrapeError(null);
+    try {
+      const res = await fetch('/api/benchmark/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: scrapeUrl, folder_id: scrapeFolder || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '스크랩 실패');
+      setScrapeUrl('');
+      setShowScrape(false);
+      loadItems(activeFolder);
+    } catch (err) {
+      setScrapeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScraping(false);
+    }
+  }
+
+  async function handleCreateFolder() {
+    if (!newFolderName.trim()) return;
+    await fetch('/api/benchmark/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newFolderName.trim() }),
+    });
+    setNewFolderName('');
+    loadFolders();
+  }
+
+  async function handleDeleteFolder(id: string) {
+    await fetch(`/api/benchmark/folders?id=${id}`, { method: 'DELETE' });
+    if (activeFolder === id) setActiveFolder('all');
+    loadFolders();
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    await fetch('/api/benchmark', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: Array.from(selected) }),
+    });
+    setSelectMode(false);
+    loadItems(activeFolder);
+  }
+
+  const filtered = items.filter((it) => it.content.includes(search) || it.source.includes(search));
 
   return (
     <div>
@@ -53,8 +149,41 @@ export default function BenchmarkPage() {
         <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full">벤치마킹 보관함 사용법 보기</span>
       </div>
 
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex-1 flex items-center gap-2 border border-border px-3 py-2.5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 text-xs font-bold text-neutral-500">
+          📁 폴더 목록 ({folders.length}개)
+        </div>
+        <button onClick={() => setShowFolders(true)} className="border border-border px-3 py-1.5 text-[11px] font-black">
+          + 폴더 관리
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <button
+          onClick={() => setActiveFolder('all')}
+          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'all' ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+        >
+          전체 보기
+        </button>
+        <button
+          onClick={() => setActiveFolder('unfiled')}
+          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'unfiled' ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+        >
+          미분류
+        </button>
+        {folders.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFolder(f.id)}
+            className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === f.id ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+          >
+            {f.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <div className="flex-1 min-w-[200px] flex items-center gap-2 border border-border px-3 py-2.5">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -62,31 +191,68 @@ export default function BenchmarkPage() {
             className="flex-1 text-sm outline-none"
           />
         </div>
-        <button className="border border-border px-4 py-2.5 text-xs font-bold flex items-center gap-1">🔑 익스텐션(크롬) 키 연동</button>
-        <button onClick={() => setShowModal(true)} className="bg-black text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
-          + 수동으로 텍스트 복붙하기
+        <button
+          onClick={() => setSelectMode((v) => !v)}
+          className={`border border-border px-4 py-2.5 text-xs font-bold ${selectMode ? 'bg-neutral-100' : ''}`}
+        >
+          📋 선택 관리
         </button>
+        <button onClick={() => setShowScrape(true)} className="bg-blue-600 text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
+          🔗 링크로 스크랩
+        </button>
+        <button onClick={() => setShowManual(true)} className="bg-black text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
+          + 수동 등록
+        </button>
+        <button className="border border-border px-4 py-2.5 text-xs font-bold flex items-center gap-1">🔑 익스텐션 키</button>
       </div>
+
+      {selectMode && selected.size > 0 && (
+        <div className="mb-4 flex items-center justify-between bg-neutral-50 border border-border px-4 py-2.5 text-xs">
+          <span className="font-bold">{selected.size}개 선택됨</span>
+          <button onClick={handleBulkDelete} className="text-red-600 font-black">선택 삭제</button>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <div className="border border-dashed border-border p-16 text-center text-sm text-neutral-400">
-          [ 보관함 비어있음 / 익스텐션 우클릭으로 스크래핑을 실행하세요 ]
+          [ 선택된 폴더에 보관된 글이 없습니다 ]
         </div>
       ) : (
         <div className="space-y-3">
           {filtered.map((it) => (
-            <div key={it.id} className="border border-border p-4">
-              {it.source && <div className="text-xs font-bold text-neutral-500 mb-1">{it.source}</div>}
-              <p className="text-sm whitespace-pre-wrap">{it.content}</p>
+            <div key={it.id} className="border border-border p-4 flex gap-3">
+              {selectMode && (
+                <input
+                  type="checkbox"
+                  checked={selected.has(it.id)}
+                  onChange={() => toggleSelect(it.id)}
+                  className="mt-1"
+                />
+              )}
+              {it.media_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={it.media_url} alt="" className="w-16 h-16 object-cover flex-shrink-0" />
+              )}
+              <div className="flex-1 min-w-0">
+                {it.source && <div className="text-xs font-bold text-neutral-500 mb-1">{it.source}</div>}
+                <p className="text-sm whitespace-pre-wrap">{it.content}</p>
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowModal(false)}>
+      {showManual && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowManual(false)}>
           <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-            <h2 className="font-black mb-4">수동으로 텍스트 복붙하기</h2>
+            <h2 className="font-black mb-4">수동 등록</h2>
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">저장할 폴더</label>
+            <select value={manualFolder} onChange={(e) => setManualFolder(e.target.value)} className="w-full border border-border px-3 py-2.5 text-sm mb-3">
+              <option value="">미분류</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
             <input
               value={source}
               onChange={(e) => setSource(e.target.value)}
@@ -98,16 +264,86 @@ export default function BenchmarkPage() {
               onChange={(e) => setContent(e.target.value)}
               placeholder="본문 내용*"
               rows={6}
-              className="w-full border border-border px-3 py-2.5 text-sm mb-4"
+              className="w-full border border-border px-3 py-2.5 text-sm mb-3"
+            />
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">사진/동영상 첨부 (선택)</label>
+            <input
+              type="file"
+              accept="image/*,video/*"
+              onChange={(e) => setMediaFile(e.target.files?.[0] || null)}
+              className="w-full text-xs mb-4"
             />
             <div className="flex gap-2">
-              <button onClick={() => setShowModal(false)} className="flex-1 border border-border text-[11px] font-black py-3">
+              <button onClick={() => setShowManual(false)} className="flex-1 border border-border text-[11px] font-black py-3">
                 취소
               </button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 bg-black text-white text-[11px] font-black py-3">
+              <button onClick={handleManualSave} disabled={saving} className="flex-1 bg-black text-white text-[11px] font-black py-3">
                 {saving ? '저장 중...' : '보관함에 저장'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showScrape && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowScrape(false)}>
+          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">🔗 스레드 링크로 즉시 스크랩</h2>
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">스레드 글 링크 (URL)</label>
+            <input
+              value={scrapeUrl}
+              onChange={(e) => setScrapeUrl(e.target.value)}
+              placeholder="https://www.threads.net/@user/post/... 또는 share/..."
+              className="w-full border border-border px-3 py-2.5 text-sm mb-3"
+            />
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">저장할 폴더 선택</label>
+            <select value={scrapeFolder} onChange={(e) => setScrapeFolder(e.target.value)} className="w-full border border-border px-3 py-2.5 text-sm mb-3">
+              <option value="">미분류</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+            {scrapeError && <div className="text-xs text-red-500 mb-3">{scrapeError}</div>}
+            <div className="flex gap-2">
+              <button onClick={() => setShowScrape(false)} className="flex-1 border border-border text-[11px] font-black py-3">
+                취소
+              </button>
+              <button onClick={handleScrape} disabled={scraping} className="flex-1 bg-blue-600 text-white text-[11px] font-black py-3">
+                {scraping ? '스크랩 중...' : '스크랩 등록'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFolders && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowFolders(false)}>
+          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">📁 벤치마킹 폴더 관리</h2>
+            <div className="flex gap-2 mb-4">
+              <input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="새 폴더 이름 입력..."
+                className="flex-1 border border-border px-3 py-2.5 text-sm"
+              />
+              <button onClick={handleCreateFolder} className="bg-black text-white text-[11px] font-black px-4">+ 생성</button>
+            </div>
+            {folders.length === 0 ? (
+              <div className="text-xs text-neutral-400 text-center py-4">생성된 폴더가 없습니다.</div>
+            ) : (
+              <div className="space-y-2 mb-4">
+                {folders.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between border border-border px-3 py-2 text-sm">
+                    <span>{f.name}</span>
+                    <button onClick={() => handleDeleteFolder(f.id)} className="text-xs text-red-500 font-bold">삭제</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setShowFolders(false)} className="w-full border border-border text-[11px] font-black py-3">
+              닫기
+            </button>
           </div>
         </div>
       )}
