@@ -28,3 +28,21 @@ export async function GET() {
   const enriched = (posts || []).map((p) => ({ ...p, account_username: accountsById[p.threads_account_id] || null }));
   return NextResponse.json({ posts: enriched });
 }
+
+export async function PATCH(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
+  const body = await request.json().catch(() => null);
+  if (!body?.id) return NextResponse.json({ error: 'id가 필요합니다.' }, { status: 400 });
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from('ut_thread_posts')
+    .update({ affiliate_comment: body.affiliateComment ?? null })
+    .eq('id', body.id)
+    .eq('user_id', user.id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true });
+}

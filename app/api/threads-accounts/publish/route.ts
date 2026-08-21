@@ -49,6 +49,29 @@ export async function POST(request: Request) {
     const publishJson = await publishRes.json();
     if (!publishRes.ok || !publishJson.id) throw new Error(publishJson.error?.message || JSON.stringify(publishJson));
 
+    // 제휴 타래(2번째 타래 댓글)가 설정돼 있으면, 방금 발행한 글에 대한 답글로 이어서 발행한다.
+    if (post.affiliate_comment?.trim()) {
+      const replyCreateRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          media_type: 'TEXT',
+          text: post.affiliate_comment,
+          reply_to_id: publishJson.id,
+          access_token: accessToken,
+        }),
+      });
+      const replyCreateJson = await replyCreateRes.json();
+      if (replyCreateRes.ok && replyCreateJson.id) {
+        await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ creation_id: replyCreateJson.id, access_token: accessToken }),
+        });
+        // 제휴 타래 발행이 실패해도 본문 발행 자체는 이미 성공했으므로 에러로 처리하지 않는다.
+      }
+    }
+
     await supabase
       .from('ut_thread_posts')
       .update({ status: 'posted', threads_account_id: accountId })
