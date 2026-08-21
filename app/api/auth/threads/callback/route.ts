@@ -55,6 +55,18 @@ export async function GET(request: Request) {
     if (!profile.id) throw new Error('프로필 조회 실패: ' + JSON.stringify(profile));
 
     const supabase = getSupabaseServerClient();
+
+    // 무료 회원은 Threads 계정 1개까지만 연동 가능 — 원본의 실제 과금모델 반영.
+    const [{ count: accountCount }, { data: existing }, { data: sub }] = await Promise.all([
+      supabase.from('ut_threads_accounts').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+      supabase.from('ut_threads_accounts').select('id').eq('user_id', user.id).eq('threads_user_id', profile.id).maybeSingle(),
+      supabase.from('ut_subscriptions').select('*').eq('user_id', user.id).maybeSingle(),
+    ]);
+    const isSubscribed = !!sub?.is_subscribed && (!sub.expires_at || new Date(sub.expires_at) > new Date());
+    if (!existing && (accountCount || 0) >= 1 && !isSubscribed) {
+      return NextResponse.redirect(new URL('/dashboard/threads-manage?error=' + encodeURIComponent('무료 회원은 1개 계정까지만 연동할 수 있어요. 프리미엄 구독 후 다시 시도해주세요.'), request.url));
+    }
+
     const { error } = await supabase.from('ut_threads_accounts').upsert(
       {
         user_id: user.id,
