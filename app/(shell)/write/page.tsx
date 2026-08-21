@@ -16,12 +16,33 @@ type ThreadPost = {
 };
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
 type AffiliateTemplate = { id: string; name: string; body: string };
+type SystemPersona = { id: string; name: string };
+type CoupangProduct = { productId: number; productName: string; productPrice: number; productImage: string; productUrl: string };
 
 const VARIABLES = ['[제품명]', '[제휴링크]', '[가격]', '[혜택]', '[심의문구]'];
 
+const COMPLIANCE_CATEGORIES = [
+  { value: '', label: '-- 분류 선택 --' },
+  { value: '의료', label: '의료법 / 병원' },
+  { value: '의약품', label: '의약품' },
+  { value: '의료기기', label: '의료기기' },
+  { value: '건기식', label: '건강기능식품' },
+  { value: '특수식품', label: '특수용도식품' },
+  { value: '금융', label: '금융투자상품' },
+  { value: '보험', label: '보험상품' },
+  { value: '대부', label: '대부업' },
+];
+
+const RESULT_STYLES = [
+  { key: 'basic', icon: '💡', label: '추천 기본 (기본기 충실)' },
+  { key: 'hook', icon: '🔥', label: '검색/뷰 최적화 (어그로/훅)' },
+  { key: 'persona', icon: '🎭', label: '내 페르소나 (커스텀 톤)' },
+] as const;
+
 function SmartEditor() {
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [personaId, setPersonaId] = useState('');
+  const [systemPersonas, setSystemPersonas] = useState<SystemPersona[]>([]);
+  const [personaKey, setPersonaKey] = useState(''); // "sys:id" | "own:id" | ""
   const [topic, setTopic] = useState('');
   const [posts, setPosts] = useState<ThreadPost[]>([]);
   const [accounts, setAccounts] = useState<ThreadsAccount[]>([]);
@@ -29,6 +50,18 @@ function SmartEditor() {
   const [publishing, setPublishing] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [topTab, setTopTab] = useState<'draft' | 'affiliate' | 'compliance'>('draft');
+  const [affiliateSubTab, setAffiliateSubTab] = useState<'coupang' | 'toss' | 'generic'>('coupang');
+  const [complianceCategory, setComplianceCategory] = useState('');
+
+  const [coupangKeyword, setCoupangKeyword] = useState('');
+  const [coupangResults, setCoupangResults] = useState<CoupangProduct[]>([]);
+  const [coupangSearching, setCoupangSearching] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<CoupangProduct | null>(null);
+
+  const [affiliateProductName, setAffiliateProductName] = useState('');
+  const [affiliateUrl, setAffiliateUrl] = useState('');
 
   const [affiliateTemplates, setAffiliateTemplates] = useState<AffiliateTemplate[]>([]);
   const [affiliateModalPost, setAffiliateModalPost] = useState<ThreadPost | null>(null);
@@ -45,6 +78,9 @@ function SmartEditor() {
     fetch('/api/personas')
       .then((r) => r.json())
       .then((d) => setPersonas(d.personas || []));
+    fetch('/api/personas/system')
+      .then((r) => r.json())
+      .then((d) => setSystemPersonas(d.systemPersonas || []));
     fetch('/api/threads-accounts')
       .then((r) => r.json())
       .then((d) => setAccounts(d.accounts || []));
@@ -53,6 +89,21 @@ function SmartEditor() {
       .then((d) => setAffiliateTemplates([...(d.systemTemplates || []), ...(d.templates || [])]));
     loadPosts();
   }, []);
+
+  async function handleCoupangSearch() {
+    if (!coupangKeyword.trim()) return;
+    setCoupangSearching(true);
+    try {
+      const res = await fetch(`/api/coupang/search?keyword=${encodeURIComponent(coupangKeyword)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '검색 실패');
+      setCoupangResults(data.products || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCoupangSearching(false);
+    }
+  }
 
   function openAffiliateModal(post: ThreadPost) {
     setAffiliateModalPost(post);
@@ -95,19 +146,47 @@ function SmartEditor() {
     }
   }
 
-  async function handleGenerate() {
-    if (!topic.trim()) return;
+  const [scope, personaId] = personaKey.split(':');
+  const canGenerate =
+    topTab === 'draft'
+      ? !!topic.trim()
+      : topTab === 'compliance'
+        ? !!topic.trim() && !!complianceCategory
+        : affiliateSubTab === 'coupang'
+          ? !!selectedProduct
+          : affiliateSubTab === 'generic'
+            ? !!affiliateUrl.trim()
+            : false; // toss: 실 API 미연동
+
+  async function handleGenerate(resultStyle: 'basic' | 'hook' | 'persona') {
+    if (!canGenerate) return;
     setGenerating(true);
     setError(null);
     try {
+      const body: Record<string, unknown> = {
+        topic: topic || undefined,
+        personaId: personaId || undefined,
+        personaIsSystem: scope === 'sys',
+        resultStyle,
+      };
+      if (topTab === 'compliance') body.complianceCategory = complianceCategory;
+      if (topTab === 'affiliate' && affiliateSubTab === 'coupang' && selectedProduct) body.product = selectedProduct;
+      if (topTab === 'affiliate' && affiliateSubTab === 'generic') {
+        body.affiliateUrl = affiliateUrl;
+        body.affiliateProductName = affiliateProductName;
+      }
+
       const res = await fetch('/api/smart-editor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, personaId: personaId || undefined }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '생성 실패');
       setTopic('');
+      setSelectedProduct(null);
+      setAffiliateUrl('');
+      setAffiliateProductName('');
       loadPosts();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -117,35 +196,200 @@ function SmartEditor() {
   }
 
   return (
-    <div className="max-w-2xl">
-      <div className="border border-border p-6 mb-6">
-        <h2 className="font-black text-sm mb-4">AI 스마트 에디터</h2>
-        {personas.length > 0 && (
-          <select value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="w-full border border-border px-3 py-2.5 text-sm mb-3">
-            <option value="">페르소나 없음 (기본 톤)</option>
-            {personas.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        )}
-        {personas.length === 0 && (
-          <div className="text-xs text-neutral-400 mb-3">
-            페르소나가 없어요. <Link href="/dashboard/personas" className="underline font-bold text-black">페르소나 관리</Link>에서 먼저 만들어보세요 (선택사항).
+    <div className="max-w-3xl">
+      <div className="border border-border mb-6">
+        <div className="flex border-b border-border">
+          {([
+            ['draft', '원고 작성'],
+            ['affiliate', '제휴 마케팅'],
+            ['compliance', '심의 필고'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setTopTab(key)}
+              className={`flex-1 py-3 text-xs font-black ${topTab === key ? 'bg-black text-white' : 'text-neutral-400'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6">
+          {topTab === 'affiliate' && (
+            <div className="flex gap-2 mb-4">
+              {([
+                ['coupang', '쿠팡 파트너스'],
+                ['toss', '토스쇼핑'],
+                ['generic', '제휴마케팅'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setAffiliateSubTab(key)}
+                  className={`px-3 py-1.5 text-[11px] font-bold border ${affiliateSubTab === key ? 'border-black bg-neutral-50' : 'border-border text-neutral-400'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {topTab === 'draft' && (
+            <textarea
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)"
+              rows={3}
+              className="w-full border border-border px-3 py-2.5 text-sm mb-3"
+            />
+          )}
+
+          {topTab === 'compliance' && (
+            <div className="mb-3">
+              <label className="text-xs font-bold text-neutral-500 mb-1 block">작성 주제 (제품명/서비스명)</label>
+              <input
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="예: 튼튼 홍삼정"
+                className="w-full border border-border px-3 py-2.5 text-sm mb-3"
+              />
+              <label className="text-xs font-bold text-neutral-500 mb-1 block">심의필 카테고리 규정</label>
+              <select
+                value={complianceCategory}
+                onChange={(e) => setComplianceCategory(e.target.value)}
+                className="w-full border border-border px-3 py-2.5 text-sm"
+              >
+                {COMPLIANCE_CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-neutral-400 mt-1">
+                선택한 업종의 광고 표현 규정을 참고해 문구를 순화해서 생성해요 (참고용이며 실제 법률 검토를 대체하지 않아요).
+              </p>
+            </div>
+          )}
+
+          {topTab === 'affiliate' && affiliateSubTab === 'coupang' && (
+            <div className="mb-3">
+              <div className="flex gap-2 mb-3">
+                <input
+                  value={coupangKeyword}
+                  onChange={(e) => setCoupangKeyword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCoupangSearch()}
+                  placeholder="상품 키워드 (예: 무선 청소기)"
+                  className="flex-1 border border-border px-3 py-2 text-sm"
+                />
+                <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-black text-white text-xs font-black px-4">
+                  {coupangSearching ? '검색 중...' : '검색'}
+                </button>
+              </div>
+              {selectedProduct && (
+                <div className="flex items-center gap-2 bg-neutral-50 border border-border p-2 mb-3 text-xs">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={selectedProduct.productImage} alt="" className="w-10 h-10 object-cover" />
+                  <span className="flex-1 font-bold">{selectedProduct.productName}</span>
+                  <span>{selectedProduct.productPrice.toLocaleString()}원</span>
+                  <button onClick={() => setSelectedProduct(null)} className="text-red-500 font-bold">선택 해제</button>
+                </div>
+              )}
+              {coupangResults.length > 0 && (
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-2 mb-3">
+                  {coupangResults.map((p) => (
+                    <button
+                      key={p.productId}
+                      onClick={() => setSelectedProduct(p)}
+                      className={`border p-2 text-left text-[11px] ${selectedProduct?.productId === p.productId ? 'border-black' : 'border-border'}`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.productImage} alt="" className="w-full aspect-square object-cover mb-1" />
+                      <div className="line-clamp-2 font-bold">{p.productName}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="추가 강조할 내용 (선택 - 비워두면 상품 정보로 AI가 자동 작성)"
+                rows={2}
+                className="w-full border border-border px-3 py-2.5 text-sm"
+              />
+            </div>
+          )}
+
+          {topTab === 'affiliate' && affiliateSubTab === 'toss' && (
+            <div className="border border-dashed border-border p-8 text-center text-xs text-neutral-400 mb-3">
+              토스쇼핑 상품 카탈로그 API 연동은 준비 중이에요.
+            </div>
+          )}
+
+          {topTab === 'affiliate' && affiliateSubTab === 'generic' && (
+            <div className="mb-3 space-y-3">
+              <div>
+                <label className="text-xs font-bold text-neutral-500 mb-1 block">제품명</label>
+                <input
+                  value={affiliateProductName}
+                  onChange={(e) => setAffiliateProductName(e.target.value)}
+                  placeholder="예: 샤오미 미밴드 8"
+                  className="w-full border border-border px-3 py-2.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-neutral-500 mb-1 block">쇼핑몰 상품 URL</label>
+                <input
+                  value={affiliateUrl}
+                  onChange={(e) => setAffiliateUrl(e.target.value)}
+                  placeholder="https://link.coupang.com/a/... 또는 https://..."
+                  className="w-full border border-border px-3 py-2.5 text-sm"
+                />
+              </div>
+              <textarea
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="추가 설명 (선택)"
+                rows={2}
+                className="w-full border border-border px-3 py-2.5 text-sm"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-xs font-bold text-neutral-500 mb-1 block">페르소나 픽</label>
+              <select value={personaKey} onChange={(e) => setPersonaKey(e.target.value)} className="w-full border border-border px-3 py-2.5 text-sm">
+                <option value="">-- 시스템 기본 --</option>
+                {systemPersonas.map((p) => (
+                  <option key={p.id} value={`sys:${p.id}`}>{p.name}</option>
+                ))}
+                {personas.map((p) => (
+                  <option key={p.id} value={`own:${p.id}`}>{p.name}</option>
+                ))}
+              </select>
+              {personas.length === 0 && (
+                <div className="text-[10px] text-neutral-400 mt-1">
+                  나만의 페르소나는 <Link href="/dashboard/personas" className="underline font-bold text-black">페르소나 관리</Link>에서 만들 수 있어요.
+                </div>
+              )}
+            </div>
           </div>
-        )}
-        <textarea
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          placeholder="어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)"
-          rows={3}
-          className="w-full border border-border px-3 py-2.5 text-sm mb-3"
-        />
-        {error && <div className="text-xs text-red-500 mb-3">{error}</div>}
-        <button onClick={handleGenerate} disabled={generating} className="w-full bg-black text-white text-[11px] font-black py-3">
-          {generating ? 'AI가 쓰는 중...' : '초안 생성하기'}
-        </button>
-        <div className="text-[10px] text-neutral-400 mt-2">
-          Gemini API 키가 필요해요 (<Link href="/onboarding" className="underline">등록하러 가기</Link>)
+
+          {error && <div className="text-xs text-red-500 mb-3">{error}</div>}
+
+          <div className="text-xs font-bold text-neutral-500 mb-2">결과 스타일을 선택하면 바로 생성이 시작돼요</div>
+          <div className="grid grid-cols-3 gap-2">
+            {RESULT_STYLES.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => handleGenerate(s.key)}
+                disabled={!canGenerate || generating}
+                className={`text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-black text-white'}`}
+              >
+                {generating ? '생성 중...' : `${s.icon} ${s.label}`}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-neutral-400 mt-2">
+            Gemini API 키가 필요해요 (<Link href="/onboarding" className="underline">등록하러 가기</Link>)
+          </div>
         </div>
       </div>
 
