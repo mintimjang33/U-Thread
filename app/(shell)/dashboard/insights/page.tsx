@@ -12,25 +12,49 @@ const TABS = [
 ];
 
 type RankedKeyword = { keyword: string; volume: number };
+type NewsItem = { title: string; link: string; description: string; pubDate: string };
+type GoogleTrendItem = { title: string; trafficLabel: string | null };
+type ShoppingPoint = { period: string; ratio: number };
 
 export default function InsightsPage() {
   const [tab, setTab] = useState('datalab');
   const [category, setCategory] = useState(CATEGORIES[0]);
+  const [isSubscribed, setIsSubscribed] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
   const [search, setSearch] = useState('');
-  const [keywords, setKeywords] = useState<RankedKeyword[]>([]);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function loadDatalab(cat: string) {
+  const [keywords, setKeywords] = useState<RankedKeyword[]>([]);
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
+  const [googleTrends, setGoogleTrends] = useState<GoogleTrendItem[]>([]);
+  const [shoppingPoints, setShoppingPoints] = useState<ShoppingPoint[]>([]);
+
+  useEffect(() => {
+    fetch('/api/subscription')
+      .then((r) => r.json())
+      .then((d) => setIsSubscribed(!!d.isSubscribed))
+      .catch(() => {});
+  }, []);
+
+  function load() {
     setLoading(true);
     setError(null);
-    fetch(`/api/trends/datalab?category=${encodeURIComponent(cat)}`)
+    let req: Promise<Response>;
+    if (tab === 'datalab') req = fetch(`/api/trends/datalab?category=${encodeURIComponent(category)}`);
+    else if (tab === 'google') req = fetch('/api/trends/google');
+    else if (tab === 'shopping') req = fetch(`/api/trends/shopping?category=${encodeURIComponent(category)}`);
+    else req = fetch(`/api/trends/realtime?query=${encodeURIComponent(search || category)}`);
+
+    req
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(d.error);
-        setKeywords(d.keywords || []);
+        if (tab === 'datalab') setKeywords(d.keywords || []);
+        else if (tab === 'google') setGoogleTrends(d.items || []);
+        else if (tab === 'shopping') setShoppingPoints(d.points || []);
+        else setNewsItems(d.items || []);
         setSyncedAt(d.syncedAt);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
@@ -38,11 +62,12 @@ export default function InsightsPage() {
   }
 
   useEffect(() => {
-    loadDatalab(category);
-  }, [category]);
+    if (tab === 'datalab' || (isSubscribed && ['google', 'shopping', 'realtime'].includes(tab))) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, category, isSubscribed]);
 
   function selectTab(id: string, free: boolean) {
-    if (!free) {
+    if (!free && !isSubscribed) {
       setShowLockModal(true);
       return;
     }
@@ -69,7 +94,7 @@ export default function InsightsPage() {
         <span className="text-xs text-neutral-400">
           {syncedAt ? `최근 데이터 동기화 완료: ${new Date(syncedAt).toLocaleString('ko-KR')}` : '최근 데이터 동기화 완료: 기록 없음'}
         </span>
-        <button onClick={() => loadDatalab(category)} className="border border-border px-4 py-2.5 text-xs font-bold">
+        <button onClick={load} className="border border-border px-4 py-2.5 text-xs font-bold">
           실시간 데이터 재동기화
         </button>
       </div>
@@ -83,67 +108,122 @@ export default function InsightsPage() {
               tab === t.id ? 'border-b-2 border-black text-black' : 'text-neutral-400'
             }`}
           >
-            {t.label} {!t.free && <span className="text-[10px]">🔒</span>}
+            {t.label} {!t.free && !isSubscribed && <span className="text-[10px]">🔒</span>}
           </button>
         ))}
       </div>
 
-      {tab === 'datalab' && (
-        <div>
-          <div className="flex flex-wrap gap-2 mb-8">
-            {CATEGORIES.map((c) => (
-              <button
-                key={c}
-                onClick={() => setCategory(c)}
-                className={`px-4 py-2 text-[13px] font-black ${
-                  category === c ? 'bg-black text-white' : 'bg-white border border-neutral-200 text-neutral-500'
-                }`}
-                style={{ borderRadius: 14 }}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-
-          <div className="border border-border p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-2 font-black">📊 {category} 인기 연관 키워드</div>
-              {loading ? (
-                <span className="text-xs bg-neutral-100 px-3 py-1 text-neutral-500">불러오는 중...</span>
-              ) : (
-                <span className="text-xs bg-emerald-50 text-emerald-600 px-3 py-1">네이버 검색광고 API 연동됨</span>
-              )}
-            </div>
-
-            {error && <p className="text-sm text-red-500 text-center py-8">{error}</p>}
-
-            {!error && !loading && keywords.length === 0 && (
-              <p className="text-sm text-neutral-400 text-center py-16">데이터가 없어요.</p>
-            )}
-
-            {!error && keywords.length > 0 && (
-              <div className="grid grid-cols-2 gap-3">
-                {keywords.map((k, i) => (
-                  <div key={k.keyword} className="flex items-center gap-3 border border-border p-3">
-                    <span
-                      className={`w-6 h-6 rounded-full text-white text-[11px] font-black flex items-center justify-center flex-shrink-0 ${
-                        i < 3 ? 'bg-blue-600' : 'bg-neutral-300'
-                      }`}
-                    >
-                      {i + 1}
-                    </span>
-                    <span className="font-bold text-sm flex-1">{k.keyword}</span>
-                    <span className="text-xs text-neutral-400">월 {k.volume.toLocaleString()}회</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <p className="text-[10px] text-neutral-300 text-center mt-6">
-              네이버 검색광고 키워드도구 기반 연관 검색량 정렬입니다(실시간 트렌드 랭킹과는 다를 수 있어요).
-            </p>
-          </div>
+      {(tab === 'datalab' || tab === 'shopping') && (
+        <div className="flex flex-wrap gap-2 mb-8">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`px-4 py-2 text-[13px] font-black ${category === c ? 'bg-black text-white' : 'bg-white border border-neutral-200 text-neutral-500'}`}
+              style={{ borderRadius: 14 }}
+            >
+              {c}
+            </button>
+          ))}
         </div>
       )}
+
+      <div className="border border-border p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2 font-black">
+            {tab === 'datalab' && `📊 ${category} 인기 연관 키워드`}
+            {tab === 'google' && '🌐 구글 트렌드 (한국, 오늘)'}
+            {tab === 'shopping' && `🛍️ ${category} 쇼핑 관심도 추이 (최근 30일)`}
+            {tab === 'realtime' && '📰 실시간 뉴스'}
+          </div>
+          {loading ? (
+            <span className="text-xs bg-neutral-100 px-3 py-1 text-neutral-500">불러오는 중...</span>
+          ) : (
+            <span className="text-xs bg-emerald-50 text-emerald-600 px-3 py-1">
+              {tab === 'google' ? 'Google Trends 연동됨' : '네이버 API 연동됨'}
+            </span>
+          )}
+        </div>
+
+        {error && <p className="text-sm text-red-500 text-center py-8">{error}</p>}
+
+        {!error && tab === 'datalab' && (
+          keywords.length === 0 ? (
+            <p className="text-sm text-neutral-400 text-center py-16">데이터가 없어요.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {keywords.map((k, i) => (
+                <div key={k.keyword} className="flex items-center gap-3 border border-border p-3">
+                  <span className={`w-6 h-6 rounded-full text-white text-[11px] font-black flex items-center justify-center flex-shrink-0 ${i < 3 ? 'bg-blue-600' : 'bg-neutral-300'}`}>{i + 1}</span>
+                  <span className="font-bold text-sm flex-1">{k.keyword}</span>
+                  <span className="text-xs text-neutral-400">월 {k.volume.toLocaleString()}회</span>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {!error && tab === 'google' && (
+          googleTrends.length === 0 ? (
+            <p className="text-sm text-neutral-400 text-center py-16">데이터가 없어요.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {googleTrends.map((t, i) => (
+                <div key={t.title} className="flex items-center gap-3 border border-border p-3">
+                  <span className={`w-6 h-6 rounded-full text-white text-[11px] font-black flex items-center justify-center flex-shrink-0 ${i < 3 ? 'bg-blue-600' : 'bg-neutral-300'}`}>{i + 1}</span>
+                  <span className="font-bold text-sm flex-1">{t.title}</span>
+                  {t.trafficLabel && <span className="text-xs text-neutral-400">{t.trafficLabel}+</span>}
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {!error && tab === 'shopping' && (
+          shoppingPoints.length === 0 ? (
+            <p className="text-sm text-neutral-400 text-center py-16">데이터가 없어요.</p>
+          ) : (
+            <div className="space-y-2">
+              {shoppingPoints.map((p) => (
+                <div key={p.period} className="flex items-center gap-3">
+                  <span className="text-xs text-neutral-400 w-20 flex-shrink-0">{p.period}</span>
+                  <div className="flex-1 bg-neutral-100 h-4 relative">
+                    <div className="bg-blue-600 h-4" style={{ width: `${p.ratio}%` }} />
+                  </div>
+                  <span className="text-xs font-bold w-10 text-right">{p.ratio}</span>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+
+        {!error && tab === 'realtime' && (
+          newsItems.length === 0 ? (
+            <p className="text-sm text-neutral-400 text-center py-16">데이터가 없어요.</p>
+          ) : (
+            <div className="space-y-3">
+              {newsItems.map((n) => (
+                <a key={n.link} href={n.link} target="_blank" rel="noopener noreferrer" className="block border border-border p-3 hover:bg-neutral-50">
+                  <div className="text-sm font-bold mb-1">{n.title}</div>
+                  <div className="text-xs text-neutral-400 line-clamp-1">{n.description}</div>
+                </a>
+              ))}
+            </div>
+          )
+        )}
+
+        {tab === 'datalab' && (
+          <p className="text-[10px] text-neutral-300 text-center mt-6">
+            네이버 검색광고 키워드도구 기반 연관 검색량 정렬입니다(실시간 트렌드 랭킹과는 다를 수 있어요).
+          </p>
+        )}
+        {tab === 'google' && (
+          <p className="text-[10px] text-neutral-300 text-center mt-6">Google Trends 비공식 RSS 피드 기반입니다.</p>
+        )}
+        {tab === 'shopping' && (
+          <p className="text-[10px] text-neutral-300 text-center mt-6">네이버 데이터랩 쇼핑인사이트 상대지수(0~100) 기반입니다.</p>
+        )}
+      </div>
 
       {showLockModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowLockModal(false)}>
