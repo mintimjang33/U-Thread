@@ -52,9 +52,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="text-[10px] text-neutral-400 font-bold pl-8">스마트 에디터 허브</div>
         </div>
 
-        <div className="px-4">
-          <Link href="/write" className="block text-center bg-black text-white text-[11px] font-black py-3.5 mb-4">
+        <div className="px-4 space-y-2 mb-4">
+          <Link href="/write" className="block text-center bg-black text-white text-[11px] font-black py-3.5">
             + 스마트 에디터 작성
+          </Link>
+          <Link href="/multi-write" className="block text-center bg-slate-800 text-white text-[11px] font-black py-3.5">
+            ⚡ 멀티 에디터 작성
           </Link>
         </div>
 

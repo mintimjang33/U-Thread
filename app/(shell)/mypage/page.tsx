@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { getSupabaseBrowserClient } from '../../lib/supabaseBrowser';
+import { getSupabaseBrowserClient } from '../../../lib/supabaseBrowser';
 
 export default function MyPage() {
   const [name, setName] = useState('');
@@ -38,8 +38,7 @@ export default function MyPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white p-10 max-w-lg mx-auto">
-      <Link href="/dashboard" className="text-xs text-neutral-400 mb-6 inline-block">← 대시보드</Link>
+    <div className="max-w-lg">
       <h1 className="text-xl font-black mb-6">마이페이지</h1>
 
       <div className="border border-border p-6 mb-6">

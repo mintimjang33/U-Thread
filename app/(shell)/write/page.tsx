@@ -104,7 +104,7 @@ function SmartEditor() {
 
 export default function SmartEditorPage() {
   return (
-    <div className="p-10">
+    <div>
       <div className="flex items-center gap-3 mb-6">
         <span className="w-2.5 h-2.5 bg-black inline-block" />
         <h1 className="text-xl font-black">스마트 에디터</h1>
