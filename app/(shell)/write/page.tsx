@@ -5,13 +5,17 @@ import Link from 'next/link';
 import { PremiumGate } from '../dashboard/PremiumLock';
 
 type Persona = { id: string; name: string };
-type ThreadPost = { id: string; topic: string; content: string; status: string; created_at: string };
+type ThreadPost = { id: string; topic: string; content: string; status: string; created_at: string; threads_account_id: string | null };
+type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
 
 function SmartEditor() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [personaId, setPersonaId] = useState('');
   const [topic, setTopic] = useState('');
   const [posts, setPosts] = useState<ThreadPost[]>([]);
+  const [accounts, setAccounts] = useState<ThreadsAccount[]>([]);
+  const [publishAccount, setPublishAccount] = useState<Record<string, string>>({});
+  const [publishing, setPublishing] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,8 +29,31 @@ function SmartEditor() {
     fetch('/api/personas')
       .then((r) => r.json())
       .then((d) => setPersonas(d.personas || []));
+    fetch('/api/threads-accounts')
+      .then((r) => r.json())
+      .then((d) => setAccounts(d.accounts || []));
     loadPosts();
   }, []);
+
+  async function handlePublish(postId: string) {
+    const accountId = publishAccount[postId] || accounts[0]?.id;
+    if (!accountId) return;
+    setPublishing(postId);
+    try {
+      const res = await fetch('/api/threads-accounts/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId, threadsAccountId: accountId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '발행 실패');
+      loadPosts();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublishing(null);
+    }
+  }
 
   async function handleGenerate() {
     if (!topic.trim()) return;
@@ -91,9 +118,34 @@ function SmartEditor() {
             <div key={p.id} className="border border-border p-4">
               <div className="text-xs text-neutral-400 mb-2">{p.topic} · {new Date(p.created_at).toLocaleString('ko-KR')}</div>
               <p className="text-sm whitespace-pre-wrap mb-3">{p.content}</p>
-              <button disabled className="text-[11px] font-black text-neutral-300 border border-border px-4 py-2 cursor-not-allowed">
-                쓰레드에 발행 (Threads 연동 후 가능 — /dashboard/threads-manage)
-              </button>
+              {p.status === 'posted' ? (
+                <span className="text-[11px] font-black text-emerald-600">✔ 발행 완료</span>
+              ) : accounts.length === 0 ? (
+                <button disabled className="text-[11px] font-black text-neutral-300 border border-border px-4 py-2 cursor-not-allowed">
+                  쓰레드에 발행 (<Link href="/dashboard/threads-manage" className="underline">계정 연동 필요</Link>)
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {accounts.length > 1 && (
+                    <select
+                      value={publishAccount[p.id] || accounts[0].id}
+                      onChange={(e) => setPublishAccount((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                      className="border border-border text-xs px-2 py-2"
+                    >
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>@{a.username || a.threads_user_id}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    onClick={() => handlePublish(p.id)}
+                    disabled={publishing === p.id}
+                    className="text-[11px] font-black text-white bg-black px-4 py-2"
+                  >
+                    {publishing === p.id ? '발행 중...' : '쓰레드에 발행'}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

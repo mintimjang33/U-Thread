@@ -13,6 +13,10 @@ const CONTENT_TYPES = [
 
 type ContentTypeKey = (typeof CONTENT_TYPES)[number]['key'];
 
+type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
+type SystemPersona = { id: string; name: string };
+type Persona = { id: string; name: string };
+
 const TEXTAREA_COPY: Record<ContentTypeKey, { label: string; placeholder: string }> = {
   casual: {
     label: '모든 계정에 공통으로 적용될 주제 또는 원고 텍스트 (필수)',
@@ -47,6 +51,15 @@ export default function MultiEditorPage() {
   const [threadSegments, setThreadSegments] = useState(1);
   const [relayDelay, setRelayDelay] = useState(false);
 
+  const [accounts, setAccounts] = useState<ThreadsAccount[]>([]);
+  const [systemPersonas, setSystemPersonas] = useState<SystemPersona[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
+  const [personaMap, setPersonaMap] = useState<Record<string, string>>({}); // accountId -> "sys:id" | "own:id"
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genResults, setGenResults] = useState<{ accountId: string; postId?: string; error?: string }[] | null>(null);
+
   useEffect(() => {
     fetch('/api/editor-defaults')
       .then((r) => r.json())
@@ -59,7 +72,45 @@ export default function MultiEditorPage() {
         setRelayDelay(def.relay_delay);
       })
       .catch(() => {});
+    fetch('/api/threads-accounts').then((r) => r.json()).then((d) => setAccounts(d.accounts || []));
+    fetch('/api/personas/system').then((r) => r.json()).then((d) => setSystemPersonas(d.systemPersonas || []));
+    fetch('/api/personas').then((r) => r.json()).then((d) => setPersonas(d.personas || []));
   }, []);
+
+  function toggleAccount(id: string) {
+    setSelectedAccounts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleGenerate() {
+    if (selectedAccounts.size === 0 || !topic.trim()) return;
+    setGenerating(true);
+    setGenError(null);
+    setGenResults(null);
+    try {
+      const accountsPayload = Array.from(selectedAccounts).map((accountId) => {
+        const key = personaMap[accountId] || '';
+        const [scope, id] = key.split(':');
+        return { accountId, personaId: id || null, personaIsSystem: scope === 'sys' };
+      });
+      const res = await fetch('/api/multi-write/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accounts: accountsPayload, topic }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '생성 실패');
+      setGenResults(data.results);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const copy = TEXTAREA_COPY[contentType];
 
@@ -79,17 +130,41 @@ export default function MultiEditorPage() {
             <h2 className="font-black text-sm">발행 계정 선택 및 페르소나 매핑</h2>
           </div>
           <div className="text-[11px] text-neutral-400">
-            <button className="mr-3 text-neutral-400">전체 해제</button>
-            선택됨: <span className="font-black text-black">0</span> / 0개
+            <button onClick={() => setSelectedAccounts(new Set())} className="mr-3 text-neutral-400">전체 해제</button>
+            선택됨: <span className="font-black text-black">{selectedAccounts.size}</span> / {accounts.length}개
           </div>
         </div>
-        <div className="border border-dashed border-border py-10 text-center text-xs text-neutral-400">
-          연동된 Threads 계정이 없습니다.{' '}
-          <Link href="/dashboard/threads-manage" className="underline font-bold text-black">
-            [내 쓰레드 관리]
-          </Link>{' '}
-          메뉴에서 계정을 연동해주세요.
-        </div>
+        {accounts.length === 0 ? (
+          <div className="border border-dashed border-border py-10 text-center text-xs text-neutral-400">
+            연동된 Threads 계정이 없습니다.{' '}
+            <Link href="/dashboard/threads-manage" className="underline font-bold text-black">
+              [내 쓰레드 관리]
+            </Link>{' '}
+            메뉴에서 계정을 연동해주세요.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((a) => (
+              <div key={a.id} className="flex items-center gap-3 border border-border p-3">
+                <input type="checkbox" checked={selectedAccounts.has(a.id)} onChange={() => toggleAccount(a.id)} />
+                <span className="text-sm font-bold flex-1">@{a.username || a.threads_user_id}</span>
+                <select
+                  value={personaMap[a.id] || ''}
+                  onChange={(e) => setPersonaMap((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                  className="border border-border text-xs px-2 py-1.5"
+                >
+                  <option value="">페르소나 없음</option>
+                  {systemPersonas.map((p) => (
+                    <option key={p.id} value={`sys:${p.id}`}>[시스템] {p.name}</option>
+                  ))}
+                  {personas.map((p) => (
+                    <option key={p.id} value={`own:${p.id}`}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 2. 글 작성 유형 선택 */}
@@ -277,12 +352,34 @@ export default function MultiEditorPage() {
           </div>
         )}
 
-        <button disabled className="w-full bg-neutral-300 text-white text-[11px] font-black py-4 cursor-not-allowed">
-          ✨ 선택한 0개 계정 맞춤 글 일괄 생성하기
+        {genError && <div className="text-xs text-red-500 mb-3">{genError}</div>}
+        {genResults && (
+          <div className="mb-3 space-y-1">
+            {genResults.map((r) => {
+              const acc = accounts.find((a) => a.id === r.accountId);
+              return (
+                <div key={r.accountId} className="text-xs">
+                  @{acc?.username || acc?.threads_user_id}: {r.error ? <span className="text-red-500">{r.error}</span> : <span className="text-emerald-600">초안 생성 완료 ✔ (내 초안은 /write에서 확인)</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <button
+          onClick={handleGenerate}
+          disabled={selectedAccounts.size === 0 || !topic.trim() || generating}
+          className={`w-full text-[11px] font-black py-4 ${
+            selectedAccounts.size === 0 || !topic.trim() ? 'bg-neutral-300 text-white cursor-not-allowed' : 'bg-black text-white'
+          }`}
+        >
+          {generating ? '생성 중...' : `✨ 선택한 ${selectedAccounts.size}개 계정 맞춤 글 일괄 생성하기`}
         </button>
-        <div className="text-[10px] text-neutral-400 text-center mt-2">
-          Threads 계정 연동(Phase 4) 후 계정을 선택하면 생성 버튼이 활성화돼요.
-        </div>
+        {accounts.length === 0 && (
+          <div className="text-[10px] text-neutral-400 text-center mt-2">
+            Threads 계정을 연동하고 계정을 선택하면 생성 버튼이 활성화돼요.
+          </div>
+        )}
       </div>
     </div>
   );
