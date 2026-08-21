@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 const NAV_ITEMS = [
   { href: '/dashboard/insights', label: '트렌드 & 인사이트' },
@@ -14,14 +15,31 @@ const NAV_ITEMS = [
 ];
 
 const BYOK_ITEMS = [
-  { key: 'ai', label: 'AI API 연결', href: '/onboarding' },
-  { key: 'threads', label: 'THREADS 계정 연결', href: '/dashboard/threads-manage' },
-  { key: 'coupang', label: '쿠팡 파트너스 API', href: '/onboarding/coupang' },
-  { key: 'toss', label: '토스 API', href: '/onboarding/toss' },
+  { key: 'ai', label: 'AI API 연결', href: '/onboarding', provider: 'GEMINI' as const },
+  { key: 'threads', label: 'THREADS 계정 연결', href: '/dashboard/threads-manage', provider: null },
+  { key: 'coupang', label: '쿠팡 파트너스 API', href: '/onboarding/coupang', provider: 'COUPANG' as const },
+  { key: 'toss', label: '토스 API', href: '/onboarding/toss', provider: 'TOSS' as const },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [connected, setConnected] = useState<Record<string, boolean>>({});
+  const [isSubscribed, setIsSubscribed] = useState(false);
+
+  useEffect(() => {
+    Promise.all(
+      BYOK_ITEMS.filter((b) => b.provider).map((b) =>
+        fetch(`/api/keys?provider=${b.provider}`)
+          .then((r) => r.json())
+          .then((d) => [b.key, !!d.hasKey] as const)
+      )
+    ).then((entries) => setConnected(Object.fromEntries(entries)));
+
+    fetch('/api/subscription')
+      .then((r) => r.json())
+      .then((d) => setIsSubscribed(!!d.isSubscribed))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-white text-black">
@@ -60,14 +78,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </nav>
 
         <div className="px-4 py-3 border-t border-border space-y-2">
-          {BYOK_ITEMS.map((b) => (
-            <Link key={b.key} href={b.href} className="flex items-center justify-between text-[11px]">
-              <span>{b.label}</span>
-              <span className="text-red-500 text-[10px] font-bold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> 미연동 상태 →
-              </span>
-            </Link>
-          ))}
+          {BYOK_ITEMS.map((b) => {
+            const isConnected = !!connected[b.key];
+            return (
+              <Link key={b.key} href={b.href} className="flex items-center justify-between text-[11px]">
+                <span>{b.label}</span>
+                {isConnected ? (
+                  <span className="text-emerald-600 text-[10px] font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block" /> 연동됨
+                  </span>
+                ) : (
+                  <span className="text-red-500 text-[10px] font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" /> 미연동 상태 →
+                  </span>
+                )}
+              </Link>
+            );
+          })}
         </div>
 
         <div className="px-4 py-4 border-t border-border flex items-center justify-between">
@@ -75,7 +102,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             마이페이지 관리 →
           </Link>
           <div className="flex items-center gap-2">
-            <button className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1.5">구독</button>
+            {isSubscribed ? (
+              <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1.5">프리미엄</span>
+            ) : (
+              <Link href="/purchase" className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1.5">구독</Link>
+            )}
           </div>
         </div>
       </aside>

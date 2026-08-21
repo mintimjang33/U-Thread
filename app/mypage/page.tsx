@@ -8,6 +8,28 @@ export default function MyPage() {
   const [name, setName] = useState('');
   const [company, setCompany] = useState('');
   const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, company, password: password || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '저장 실패');
+      setMsg('저장했어요.');
+      setPassword('');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function handleLogoutAll() {
     const supabase = getSupabaseBrowserClient();
@@ -26,7 +48,10 @@ export default function MyPage() {
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름" className="w-full border border-border px-3 py-2.5 text-sm" />
           <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="회사명" className="w-full border border-border px-3 py-2.5 text-sm" />
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="새 비밀번호 교체" className="w-full border border-border px-3 py-2.5 text-sm" />
-          <button className="w-full bg-black text-white text-[11px] font-black py-3">수정 사항 저장하기</button>
+          {msg && <div className="text-xs text-neutral-500">{msg}</div>}
+          <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3">
+            {saving ? '저장 중...' : '수정 사항 저장하기'}
+          </button>
         </div>
       </div>
 

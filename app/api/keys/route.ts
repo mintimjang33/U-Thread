@@ -1,17 +1,30 @@
 import { NextResponse } from 'next/server';
+import { getSupabaseServerClient } from '../../../lib/supabase';
+import { getCurrentUser } from '../../../lib/supabaseServerAuth';
 import { encryptVaultValue } from '../../../lib/vaultCrypto';
 
-// TODO: Supabase 연결 후 api_keys_vault(user_id, provider, encrypted_values) 테이블로 교체.
-// 지금은 암호화 자체는 실제로 검증하되(콘솔에 암호문 길이만 로그), 저장은 메모리에만 한다.
-const memoryStore = new Map<string, Record<string, string>>();
-
 export async function GET(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
   const { searchParams } = new URL(request.url);
   const provider = searchParams.get('provider') || 'GEMINI';
-  return NextResponse.json({ hasKey: memoryStore.has(provider), provider });
+
+  const supabase = getSupabaseServerClient();
+  const { data } = await supabase
+    .from('ut_api_keys_vault')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('provider', provider)
+    .maybeSingle();
+
+  return NextResponse.json({ hasKey: !!data, provider });
 }
 
 export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
   const body = await request.json().catch(() => null);
   if (!body?.provider || !body?.values) {
     return NextResponse.json({ error: 'provider/values가 필요합니다.' }, { status: 400 });
@@ -21,7 +34,12 @@ export async function POST(request: Request) {
   for (const [k, v] of Object.entries(body.values as Record<string, string>)) {
     if (typeof v === 'string' && v) encrypted[k] = encryptVaultValue(v);
   }
-  memoryStore.set(body.provider, encrypted);
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from('ut_api_keys_vault')
+    .upsert({ user_id: user.id, provider: body.provider, encrypted_values: encrypted }, { onConflict: 'user_id,provider' });
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true });
 }

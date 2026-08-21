@@ -1,18 +1,32 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function PurchasePage() {
+  const router = useRouter();
   const [agree1, setAgree1] = useState(false);
   const [agree2, setAgree2] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // TODO: 토스페이먼츠 정기결제(빌링키) API 연동. 지금은 실제 결제를 진행하지 않는 목업.
-  function handlePay() {
+  // TODO: 토스페이먼츠 정기결제(빌링키) API 연동 전까지는, 실제 카드 결제 없이
+  // 프리미엄 기능을 테스트해볼 수 있도록 구독 상태만 30일 부여한다.
+  async function handlePay() {
     if (!agree1 || !agree2) {
       alert('약관에 모두 동의해주세요.');
       return;
     }
-    alert('실제 결제 연동은 아직 준비 중이에요. (Phase 3)');
+    setLoading(true);
+    try {
+      const res = await fetch('/api/subscription', { method: 'POST' });
+      if (!res.ok) throw new Error('구독 처리에 실패했어요.');
+      alert('프리미엄이 활성화됐어요! (실제 결제 없이 테스트용으로 30일 부여됨)');
+      router.push('/dashboard');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -44,9 +58,12 @@ export default function PurchasePage() {
           청약철회(환불) 제한 조건 동의 (필수)
         </label>
 
-        <button onClick={handlePay} className="w-full bg-black text-white text-[11px] font-black py-4">
-          💳 유쓰레드 정기 구독
+        <button onClick={handlePay} disabled={loading} className="w-full bg-black text-white text-[11px] font-black py-4">
+          {loading ? '처리 중...' : '💳 유쓰레드 정기 구독'}
         </button>
+        <div className="text-[10px] text-neutral-300 text-center mt-3">
+          실제 카드 결제는 아직 연동 전이에요 — 구독 상태만 테스트로 켜집니다.
+        </div>
       </div>
     </div>
   );
