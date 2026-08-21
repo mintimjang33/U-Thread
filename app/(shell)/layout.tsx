@@ -181,7 +181,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      <main className="flex-1 p-10">{children}</main>
+      <main className="flex-1 p-10 flex flex-col">
+        <div className="flex-1">{children}</div>
+        <footer className="border-t border-border mt-16 pt-6 text-center text-[11px] text-neutral-400">
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <Link href="/policy#terms" className="hover:text-black">이용약관</Link>
+            <span>·</span>
+            <Link href="/policy#privacy" className="hover:text-black">개인정보처리방침</Link>
+            <span>·</span>
+            <Link href="/policy#support" className="hover:text-black">도움말 및 지원</Link>
+            <span>·</span>
+            <Link href="/policy#status" className="hover:text-black">API 상태</Link>
+          </div>
+          <div>© 2026 유쓰레드. All rights reserved.</div>
+        </footer>
+      </main>
 
       {helpDetail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setHelpDetail(null)}>
