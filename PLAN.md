@@ -1,3 +1,14 @@
+## 진행 상황 (2026-08-21 업데이트)
+
+- **서비스명 확정**: "유쓰레드"(UShort와 짝을 이루는 네이밍)로 리브랜딩 완료.
+- **Phase 1 완료**: Next.js 16(App Router)+TypeScript+Tailwind 스캐폴딩, 랜딩페이지, 로그인/회원가입(Google OAuth 우선+이메일 보조), 대시보드 셸(사이드바 네비 7개+BYOK 상태바 4개), 무료 페이지 6종+프리미엄 잠금 3종+BYOK Vault 3종(AES-256-GCM 실암호화)+구독결제 목업까지 전부 구현. `npm run build` 전체 통과 확인함(25개 라우트).
+- **실제 로그인해서 재정찰함(2026-08-21)**: 원본은 다크 테마가 아니라 **라이트 테마**였음(§2.3의 "다크 테마" 서술은 오기 — 로그인 전 랜딩만 확인했던 이전 기록의 착오로 추정). 실제 CSS 값(getComputedStyle)까지 확인: 배경 흰색, 폰트굵기 900, 모서리 반경 2~14px(각진 스타일), 사이드바 활성 네비 bg #f5f5f5. 이 값들을 그대로 반영함.
+- **Threads 자동화 관련 확인**: 사용자 소유의 다른 프로젝트(ai_thread_map, freshseason2026)에 이미 Threads 콘텐츠 초안 작성 실험이 있었으나, **완전 자동 업로드까지 검증된 건 아니라고 사용자가 정정함** — 재사용하지 않고 원본 로드맵대로 Phase 4에서 Meta Developer 앱 등록부터 처음부터 제대로 구현하기로 함.
+- **아직 안 한 것**: Supabase 프로젝트 생성(.env.local이 placeholder 상태라 로그인/DB 전부 미작동), Phase 2(무료 기능 실데이터 연동), Phase 3(결제), Phase 4(Threads OAuth, Gemini 실연동).
+- **작업 디렉토리**: `C:\Users\user\Downloads\dreaths-clone\` (이 문서의 §5 로드맵에 있던 `C:\Users\NeoSol\...` 경로는 오기, 실제로는 이 경로). dev 서버는 포트 3200, `Downloads/.claude/launch.json`에 "dreaths-clone" 설정으로 등록됨.
+
+---
+
 # DREATHS(THREADMATE) 클론 프로젝트 계획서
 
 > 이 문서는 **기억(메모리)이 없는 새로운 Claude 세션이 읽어도 이 프로젝트를 처음부터 이어서 진행할 수 있도록** 자기완결적으로 작성되었습니다.
