@@ -31,6 +31,31 @@ export default function BenchmarkPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const [showExtension, setShowExtension] = useState(false);
+  const [extensionKey, setExtensionKey] = useState<string | null>(null);
+  const [issuingKey, setIssuingKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function handleOpenExtensionModal() {
+    setShowExtension(true);
+    if (extensionKey) return;
+    setIssuingKey(true);
+    try {
+      const res = await fetch('/api/extension/issue-key', { method: 'POST' });
+      const data = await res.json();
+      setExtensionKey(data.token || null);
+    } finally {
+      setIssuingKey(false);
+    }
+  }
+
+  function handleCopyKey() {
+    if (!extensionKey) return;
+    navigator.clipboard.writeText(extensionKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
   function loadFolders() {
     fetch('/api/benchmark/folders')
       .then((r) => r.json())
@@ -203,7 +228,7 @@ export default function BenchmarkPage() {
         <button onClick={() => setShowManual(true)} className="bg-black text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
           + 수동 등록
         </button>
-        <button className="border border-border px-4 py-2.5 text-xs font-bold flex items-center gap-1">🔑 익스텐션 키</button>
+        <button onClick={handleOpenExtensionModal} className="border border-border px-4 py-2.5 text-xs font-bold flex items-center gap-1">🔑 익스텐션 키</button>
       </div>
 
       {selectMode && selected.size > 0 && (
@@ -342,6 +367,35 @@ export default function BenchmarkPage() {
               </div>
             )}
             <button onClick={() => setShowFolders(false)} className="w-full border border-border text-[11px] font-black py-3">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showExtension && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExtension(false)}>
+          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-1">🔑 익스텐션 연동 키</h2>
+            <p className="text-xs text-neutral-400 mb-4">
+              크롬 익스텐션을 설치하고 이 키를 붙여넣으면, Threads 글에서 우클릭으로 바로 벤치마킹 보관함에 저장할 수 있어요.
+            </p>
+            {issuingKey ? (
+              <div className="text-xs text-neutral-400 text-center py-6">키 발급 중...</div>
+            ) : (
+              <>
+                <div className="border border-border p-3 text-xs break-all bg-neutral-50 mb-3 font-mono">{extensionKey}</div>
+                <button onClick={handleCopyKey} className="w-full border border-border text-[11px] font-black py-2.5 mb-4">
+                  {copied ? '복사됨 ✔' : '키 복사하기'}
+                </button>
+              </>
+            )}
+            <div className="text-[11px] text-neutral-500 space-y-1 mb-4">
+              <div>1. 익스텐션을 크롬에 설치 (개발자모드 → 압축해제된 확장 프로그램 로드)</div>
+              <div>2. 익스텐션 팝업에서 위 키를 붙여넣고 저장</div>
+              <div>3. Threads 게시물에서 텍스트를 선택하고 우클릭 → &quot;유쓰레드 벤치마킹에 저장&quot;</div>
+            </div>
+            <button onClick={() => setShowExtension(false)} className="w-full bg-black text-white text-[11px] font-black py-3">
               닫기
             </button>
           </div>

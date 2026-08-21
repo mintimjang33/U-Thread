@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 
 type Field = { key: string; label: string; placeholder?: string; type?: string };
 
@@ -30,7 +31,10 @@ export function VaultForm({ provider, serviceName, fields }: { provider: string;
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center p-6">
+      <div className="max-w-md w-full mb-3">
+        <Link href="/dashboard" className="text-xs text-neutral-400 hover:text-black">← 대시보드로 돌아가기</Link>
+      </div>
       <div className="bg-white border border-border p-8 max-w-md w-full">
         <h1 className="font-black text-lg mb-4">유쓰레드 보안 볼트 (VAULT)</h1>
         <p className="text-xs text-neutral-500 mb-6 leading-relaxed">

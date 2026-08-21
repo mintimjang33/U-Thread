@@ -1,7 +1,6 @@
 import Link from "next/link";
 
-// 실제 사이트(drt.agczero.com) 정찰 결과(PLAN.md §2.3 ①)를 그대로 재현한 랜딩페이지.
-// 카피는 리브랜딩(DREATHS/THREADMATE → 유쓰레드)했지만 구조·설득 흐름(PAS 패턴)은 동일하게 유지.
+// PAS(Problem-Agitate-Solve) 구조의 랜딩페이지.
 
 const painPoints = [
   {

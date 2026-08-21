@@ -21,10 +21,48 @@ const BYOK_ITEMS = [
   { key: 'toss', label: '토스 API', href: '/onboarding/toss', provider: 'TOSS' as const },
 ];
 
+const HELP_ITEMS = [
+  {
+    key: 'gemini',
+    label: 'Gemini 연동 안내',
+    href: '/onboarding',
+    steps: [
+      'Google AI Studio(aistudio.google.com)에 접속해서 구글 계정으로 로그인해요.',
+      '좌측 메뉴에서 "Get API key" → "Create API key"를 클릭해요.',
+      '발급된 키를 복사해요.',
+      '유쓰레드의 "AI API 연결" 페이지에 붙여넣고 저장하면 끝이에요.',
+    ],
+  },
+  {
+    key: 'threads',
+    label: 'Threads 계정 연결 안내',
+    href: '/dashboard/threads-manage',
+    steps: [
+      '"내 쓰레드 관리" 메뉴에서 "THREADS 계정 연동하기" 버튼을 눌러요.',
+      'Meta(Threads) 로그인 화면이 뜨면 본인 Threads 계정으로 로그인해요.',
+      '권한 요청 화면에서 내용을 확인하고 "계속"을 눌러요.',
+      '자동으로 유쓰레드로 돌아오면 연동이 완료된 거예요.',
+    ],
+  },
+  {
+    key: 'coupang',
+    label: '쿠팡 파트너스 연동 안내',
+    href: '/onboarding/coupang',
+    steps: [
+      '쿠팡파트너스(partners.coupang.com)에 가입하고 로그인해요.',
+      '마이페이지 → "Open API 키 발급" 메뉴로 들어가요.',
+      'Access Key / Secret Key를 확인해요.',
+      '유쓰레드의 "쿠팡 파트너스 API" 페이지에 두 값을 입력하고 저장하면 끝이에요.',
+    ],
+  },
+];
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [connected, setConnected] = useState<Record<string, boolean>>({});
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpDetail, setHelpDetail] = useState<(typeof HELP_ITEMS)[number] | null>(null);
 
   useEffect(() => {
     Promise.all(
@@ -80,6 +118,35 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
+        <div className="px-4 pt-3 relative">
+          <button
+            onClick={() => setShowHelp((v) => !v)}
+            className="w-full bg-violet-100 text-violet-700 text-[10px] font-black px-3 py-1.5 rounded-full"
+          >
+            API 연동이 힘드신가요?
+          </button>
+          {showHelp && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowHelp(false)} />
+              <div className="absolute bottom-full left-4 mb-2 w-56 bg-white border border-border shadow-lg z-50 p-2">
+                <div className="text-[10px] font-black text-neutral-400 px-2 py-1">연동 가이드 보기</div>
+                {HELP_ITEMS.map((h) => (
+                  <button
+                    key={h.key}
+                    onClick={() => {
+                      setHelpDetail(h);
+                      setShowHelp(false);
+                    }}
+                    className="w-full text-left flex items-center gap-2 px-2 py-2 text-[11px] font-bold hover:bg-neutral-50"
+                  >
+                    📖 {h.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="px-4 py-3 border-t border-border space-y-2">
           {BYOK_ITEMS.map((b) => {
             const isConnected = !!connected[b.key];
@@ -115,6 +182,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       <main className="flex-1 p-10">{children}</main>
+
+      {helpDetail && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setHelpDetail(null)}>
+          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">📖 {helpDetail.label}</h2>
+            <ol className="space-y-3 mb-6">
+              {helpDetail.steps.map((s, i) => (
+                <li key={i} className="flex gap-3 text-xs leading-relaxed">
+                  <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] font-black flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="flex gap-2">
+              <button onClick={() => setHelpDetail(null)} className="flex-1 border border-border text-[11px] font-black py-3">닫기</button>
+              <Link
+                href={helpDetail.href}
+                onClick={() => setHelpDetail(null)}
+                className="flex-1 text-center bg-black text-white text-[11px] font-black py-3"
+              >
+                연동하러 가기
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

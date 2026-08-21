@@ -1,4 +1,4 @@
--- 유쓰레드(dreaths-clone) 전용 테이블. UShort와 같은 Supabase 프로젝트를 공유하므로
+-- 유쓰레드 전용 테이블. UShort와 같은 Supabase 프로젝트를 공유하므로
 -- 이름 충돌 방지를 위해 ut_ 접두사를 씁니다. Supabase SQL Editor에서 실행하세요.
 
 create table if not exists ut_benchmark_items (

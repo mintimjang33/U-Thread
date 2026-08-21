@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 const PLANS = {
   monthly: { label: '30일 프리미엄 이용권', period: '30일', original: 99000, price: 33000, discount: '67% OFF' },
@@ -42,7 +43,10 @@ export default function PurchasePage() {
   const selected = PLANS[plan];
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center p-6">
+      <div className="max-w-sm w-full mb-3">
+        <Link href="/dashboard" className="text-xs text-neutral-400 hover:text-black">← 대시보드로 돌아가기</Link>
+      </div>
       <div className="bg-white border border-border p-8 max-w-sm w-full">
         <h1 className="font-black text-lg mb-1">프리미엄 구독</h1>
         <p className="text-xs text-neutral-400 mb-6">유쓰레드 정기 구독권 결제 신청</p>
