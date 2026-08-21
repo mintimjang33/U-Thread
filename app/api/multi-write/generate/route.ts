@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '../../../../lib/supabase';
 import { getCurrentUser } from '../../../../lib/supabaseServerAuth';
 import { decryptVaultValue } from '../../../../lib/vaultCrypto';
+import { coupangDeeplink } from '../../../../lib/coupangApi';
 
 const SYSTEM_PROMPT = `너는 쓰레드(Threads) 바이럴 글쓰기 전문가다. 아래 규칙을 반드시 지켜라.
 
@@ -23,8 +24,9 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const accountPersonas: AccountPersona[] = body?.accounts || [];
+  const product = body?.product as { productName: string; productPrice: number; productUrl: string } | undefined;
   if (!accountPersonas.length) return NextResponse.json({ error: '발행 계정을 선택해주세요.' }, { status: 400 });
-  if (!body?.topic?.trim()) return NextResponse.json({ error: 'topic이 필요합니다.' }, { status: 400 });
+  if (!body?.topic?.trim() && !product) return NextResponse.json({ error: 'topic 또는 product가 필요합니다.' }, { status: 400 });
 
   const supabase = getSupabaseServerClient();
 
@@ -39,6 +41,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Gemini API 키가 등록되어 있지 않습니다. /onboarding에서 먼저 등록해주세요.' }, { status: 400 });
   }
   const apiKey = decryptVaultValue(encryptedKey);
+
+  let userPrompt = `주제: ${body.topic || ''}`;
+  let deeplink: string | null = null;
+  if (product) {
+    userPrompt = `아래 쿠팡 상품에 대한 리뷰형 쓰레드 글을 써줘.\n상품명: ${product.productName}\n가격: ${product.productPrice.toLocaleString()}원\n${body.topic ? `추가 강조할 내용: ${body.topic}` : ''}`;
+    const { data: keyRow2 } = await supabase
+      .from('ut_api_keys_vault')
+      .select('encrypted_values')
+      .eq('user_id', user.id)
+      .eq('provider', 'COUPANG')
+      .maybeSingle();
+    const coupangEnc = keyRow2?.encrypted_values;
+    if (coupangEnc?.accessKey && coupangEnc?.secretKey) {
+      try {
+        const links = await coupangDeeplink(
+          decryptVaultValue(coupangEnc.accessKey),
+          decryptVaultValue(coupangEnc.secretKey),
+          [product.productUrl]
+        );
+        deeplink = links[0]?.shortenUrl || links[0]?.landingUrl || null;
+      } catch {
+        deeplink = null; // 딥링크 생성 실패해도 본문 생성은 계속 진행
+      }
+    }
+  }
 
   const results: { accountId: string; postId?: string; error?: string }[] = [];
 
@@ -60,7 +87,7 @@ export async function POST(request: Request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT + personaContext }] },
-          contents: [{ role: 'user', parts: [{ text: `주제: ${body.topic}` }] }],
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           generationConfig: { responseMimeType: 'application/json' },
         }),
       });
@@ -75,6 +102,9 @@ export async function POST(request: Request) {
         content = JSON.parse(rawText).content;
       } catch {
         content = rawText;
+      }
+      if (deeplink) {
+        content += `\n\n이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n${deeplink}`;
       }
 
       const { data: post, error } = await supabase

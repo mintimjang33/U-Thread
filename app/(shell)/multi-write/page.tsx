@@ -16,6 +16,7 @@ type ContentTypeKey = (typeof CONTENT_TYPES)[number]['key'];
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
 type SystemPersona = { id: string; name: string };
 type Persona = { id: string; name: string };
+type CoupangProduct = { productId: number; productName: string; productPrice: number; productImage: string; productUrl: string };
 
 const TEXTAREA_COPY: Record<ContentTypeKey, { label: string; placeholder: string }> = {
   casual: {
@@ -60,6 +61,28 @@ export default function MultiEditorPage() {
   const [genError, setGenError] = useState<string | null>(null);
   const [genResults, setGenResults] = useState<{ accountId: string; postId?: string; error?: string }[] | null>(null);
 
+  const [coupangKeyword, setCoupangKeyword] = useState('');
+  const [coupangResults, setCoupangResults] = useState<CoupangProduct[]>([]);
+  const [coupangSearching, setCoupangSearching] = useState(false);
+  const [coupangError, setCoupangError] = useState<string | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<CoupangProduct | null>(null);
+
+  async function handleCoupangSearch() {
+    if (!coupangKeyword.trim()) return;
+    setCoupangSearching(true);
+    setCoupangError(null);
+    try {
+      const res = await fetch(`/api/coupang/search?keyword=${encodeURIComponent(coupangKeyword)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '검색 실패');
+      setCoupangResults(data.products || []);
+    } catch (err) {
+      setCoupangError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCoupangSearching(false);
+    }
+  }
+
   useEffect(() => {
     fetch('/api/editor-defaults')
       .then((r) => r.json())
@@ -86,8 +109,11 @@ export default function MultiEditorPage() {
     });
   }
 
+  const requiresProduct = contentType === 'coupang' || contentType === 'toss';
+  const canGenerate = selectedAccounts.size > 0 && (topic.trim() || (requiresProduct && selectedProduct));
+
   async function handleGenerate() {
-    if (selectedAccounts.size === 0 || !topic.trim()) return;
+    if (!canGenerate) return;
     setGenerating(true);
     setGenError(null);
     setGenResults(null);
@@ -100,7 +126,12 @@ export default function MultiEditorPage() {
       const res = await fetch('/api/multi-write/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accounts: accountsPayload, topic }),
+        body: JSON.stringify({
+          accounts: accountsPayload,
+          topic,
+          contentType,
+          product: contentType === 'coupang' && selectedProduct ? selectedProduct : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '생성 실패');
@@ -213,6 +244,50 @@ export default function MultiEditorPage() {
             </button>
           </div>
         </div>
+
+        {contentType === 'coupang' && (
+          <div className="border border-border p-4 mb-4">
+            <div className="text-xs font-black mb-2">📦 쿠팡 상품 검색</div>
+            <div className="flex gap-2 mb-3">
+              <input
+                value={coupangKeyword}
+                onChange={(e) => setCoupangKeyword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCoupangSearch()}
+                placeholder="상품 키워드 (예: 무선 청소기)"
+                className="flex-1 border border-border px-3 py-2 text-sm"
+              />
+              <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-black text-white text-xs font-black px-4">
+                {coupangSearching ? '검색 중...' : '검색'}
+              </button>
+            </div>
+            {coupangError && <div className="text-xs text-red-500 mb-2">{coupangError}</div>}
+            {selectedProduct && (
+              <div className="flex items-center gap-2 bg-neutral-50 border border-border p-2 mb-3 text-xs">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={selectedProduct.productImage} alt="" className="w-10 h-10 object-cover" />
+                <span className="flex-1 font-bold">{selectedProduct.productName}</span>
+                <span>{selectedProduct.productPrice.toLocaleString()}원</span>
+                <button onClick={() => setSelectedProduct(null)} className="text-red-500 font-bold">선택 해제</button>
+              </div>
+            )}
+            {coupangResults.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {coupangResults.map((p) => (
+                  <button
+                    key={p.productId}
+                    onClick={() => setSelectedProduct(p)}
+                    className={`border p-2 text-left text-[11px] ${selectedProduct?.productId === p.productId ? 'border-black' : 'border-border'}`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.productImage} alt="" className="w-full aspect-square object-cover mb-1" />
+                    <div className="line-clamp-2 font-bold">{p.productName}</div>
+                    <div className="text-neutral-500">{p.productPrice.toLocaleString()}원</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <label className="bg-black text-white text-[11px] font-black px-3 py-2 cursor-pointer">
@@ -368,10 +443,8 @@ export default function MultiEditorPage() {
 
         <button
           onClick={handleGenerate}
-          disabled={selectedAccounts.size === 0 || !topic.trim() || generating}
-          className={`w-full text-[11px] font-black py-4 ${
-            selectedAccounts.size === 0 || !topic.trim() ? 'bg-neutral-300 text-white cursor-not-allowed' : 'bg-black text-white'
-          }`}
+          disabled={!canGenerate || generating}
+          className={`w-full text-[11px] font-black py-4 ${!canGenerate ? 'bg-neutral-300 text-white cursor-not-allowed' : 'bg-black text-white'}`}
         >
           {generating ? '생성 중...' : `✨ 선택한 ${selectedAccounts.size}개 계정 맞춤 글 일괄 생성하기`}
         </button>
