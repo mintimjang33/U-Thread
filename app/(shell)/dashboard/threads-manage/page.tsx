@@ -3,22 +3,14 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { THREADS_SCOPE_STRING } from '../../../../lib/threadsScopes';
 
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string; token_expires_at: string | null };
 type Mention = { id: string; text: string; username: string; permalink: string; timestamp: string };
+type ScopeStatus = { key: string; label: string; granted: boolean };
 
 const REDIRECT_URI = 'https://u-thread.vercel.app/api/auth/threads/callback';
-const SCOPES = [
-  'threads_basic',
-  'threads_content_publish',
-  'threads_manage_replies',
-  'threads_read_replies',
-  'threads_manage_insights',
-  'threads_keyword_search',
-  'threads_delete',
-  'threads_manage_mentions',
-  'threads_share_to_instagram',
-].join(',');
+const SCOPES = THREADS_SCOPE_STRING;
 
 export default function ThreadsManagePage() {
   return (
@@ -43,6 +35,12 @@ function ThreadsManageInner() {
   const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [repliedIds, setRepliedIds] = useState<Set<string>>(new Set());
+
+  const [permAccount, setPermAccount] = useState<ThreadsAccount | null>(null);
+  const [permScopes, setPermScopes] = useState<ScopeStatus[] | null>(null);
+  const [permSupported, setPermSupported] = useState(true);
+  const [permMessage, setPermMessage] = useState<string | null>(null);
+  const [permLoading, setPermLoading] = useState(false);
 
   function load() {
     fetch('/api/threads-accounts')
@@ -94,6 +92,26 @@ function ThreadsManageInner() {
       .finally(() => setMentionsLoading(false));
   }
 
+  function openPermissions(account: ThreadsAccount) {
+    setPermAccount(account);
+    setPermScopes(null);
+    setPermMessage(null);
+    setPermSupported(true);
+    setPermLoading(true);
+    fetch(`/api/threads-accounts/permissions?accountId=${account.id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setPermSupported(!!d.supported);
+        if (d.supported) setPermScopes(d.scopes || []);
+        else setPermMessage(d.message || '권한 상세를 확인할 수 없어요.');
+      })
+      .catch(() => {
+        setPermSupported(false);
+        setPermMessage('권한 조회 중 오류가 발생했어요.');
+      })
+      .finally(() => setPermLoading(false));
+  }
+
   async function handleReplyMention(mentionId: string) {
     if (!mentionsAccount || !replyDraft[mentionId]?.trim()) return;
     setReplyingId(mentionId);
@@ -135,8 +153,9 @@ function ThreadsManageInner() {
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={() => openMentions(a)} className="text-xs text-neutral-500 font-bold">💬 멘션함</button>
-                <button onClick={() => handleDisconnect(a.id)} className="text-xs text-red-500 font-bold">연동 해제</button>
+                <button onClick={() => openPermissions(a)} className="text-xs text-neutral-500 font-bold cursor-pointer hover:text-black">🔍 권한 상태</button>
+                <button onClick={() => openMentions(a)} className="text-xs text-neutral-500 font-bold cursor-pointer hover:text-black">💬 멘션함</button>
+                <button onClick={() => handleDisconnect(a.id)} className="text-xs text-red-500 font-bold cursor-pointer hover:text-red-700">연동 해제</button>
               </div>
             </div>
           ))}
@@ -154,6 +173,39 @@ function ThreadsManageInner() {
           <div className="text-[10px] text-neutral-400 mt-3">무료 회원은 1개 계정까지 연동할 수 있어요.</div>
         )}
       </div>
+
+      {permAccount && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setPermAccount(null)}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-1">🔍 @{permAccount.username || permAccount.threads_user_id} 권한 상태</h2>
+            <p className="text-xs text-neutral-400 mb-4">이 계정 토큰에 실제로 부여된 권한이에요. 문제가 있으면 어떤 권한이 막혀있는지 여기서 바로 보여요.</p>
+            {permLoading ? (
+              <div className="text-sm text-neutral-400 text-center py-8">확인 중...</div>
+            ) : !permSupported ? (
+              <div className="text-xs text-neutral-500 border border-dashed border-border p-4 text-center">
+                {permMessage || 'Threads가 권한 상세 조회를 지원하지 않아요.'}
+                <div className="text-[10px] text-neutral-400 mt-2">실제 기능을 써봐야 확인 가능해요(예: 멘션함, 삭제 버튼).</div>
+              </div>
+            ) : (
+              <div className="space-y-1.5 mb-2">
+                {(permScopes || []).map((s) => (
+                  <div key={s.key} className="flex items-center justify-between text-xs border border-border px-3 py-2">
+                    <span className="font-bold">{s.label}</span>
+                    {s.granted ? (
+                      <span className="text-emerald-600 font-black">✔ 사용 가능</span>
+                    ) : (
+                      <span className="text-red-500 font-black">✕ 권한 없음</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setPermAccount(null)} className="w-full border border-border text-[11px] font-black py-3 mt-4">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
 
       {mentionsAccount && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setMentionsAccount(null)}>
