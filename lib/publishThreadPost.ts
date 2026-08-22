@@ -1,7 +1,7 @@
 import { getSupabaseServerClient } from './supabase';
 import { decryptVaultValue } from './vaultCrypto';
 
-type ThreadPost = { id: string; content: string; affiliate_comment: string | null };
+type ThreadPost = { id: string; content: string; affiliate_comment: string | null; share_to_instagram?: boolean };
 type ThreadsAccount = { threads_user_id: string; encrypted_access_token: string };
 
 // 실제 Threads Graph API로 게시물(+제휴 타래가 있으면 답글까지)을 발행한다.
@@ -20,7 +20,11 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
   const publishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ creation_id: createJson.id, access_token: accessToken }),
+    body: JSON.stringify({
+      creation_id: createJson.id,
+      access_token: accessToken,
+      ...(post.share_to_instagram ? { crossreshare_to_ig: true } : {}),
+    }),
   });
   const publishJson = await publishRes.json();
   if (!publishRes.ok || !publishJson.id) throw new Error(publishJson.error?.message || JSON.stringify(publishJson));
@@ -64,7 +68,10 @@ export async function publishScheduledPost(postId: string) {
 
   try {
     const result = await publishThreadPostNow(post, account);
-    await supabase.from('ut_thread_posts').update({ status: 'posted', publish_error: null }).eq('id', postId);
+    await supabase
+      .from('ut_thread_posts')
+      .update({ status: 'posted', publish_error: null, threads_post_id: result.threadsPostId })
+      .eq('id', postId);
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

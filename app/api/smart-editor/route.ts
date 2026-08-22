@@ -24,6 +24,11 @@ const RESULT_STYLE_ADDON: Record<string, string> = {
   persona: '\n\n[결과 스타일: 내 페르소나] 아래 지정된 페르소나의 말투·어조를 다른 모든 규칙보다 최우선으로 강하게 반영해라. 페르소나 지침과 충돌하는 일반 규칙은 페르소나를 따른다.',
 };
 
+const MODE_ADDON: Record<string, string> = {
+  casual: '',
+  expert: '\n\n[작성 모드: 전문성글] 정보성 칼럼처럼 근거와 구조를 갖춰 전문적인 톤으로 작성해라. 가벼운 유머보다 신뢰도를 우선해라.',
+};
+
 // 국내 광고심의가 엄격한 업종별 표현 제약(일반적으로 알려진 규정 요지, 법률 자문 대체 불가 — 참고용).
 const COMPLIANCE_RULES: Record<string, string> = {
   '의료': '의료법 광고 규정: 치료효과를 단정하거나 "완치/100% 효과" 등 과장된 표현 금지. 환자 치료경험담을 광고처럼 포장 금지. 특정 병원/시술 최상급 표현(최고, 1위 등 객관적 근거 없는) 금지.',
@@ -51,6 +56,23 @@ export async function POST(request: Request) {
 
   const supabase = getSupabaseServerClient();
 
+  // 직접 작성 모드: AI 생성 없이 입력한 텍스트를 그대로 초안으로 저장한다.
+  if (body.mode === 'manual') {
+    const { data: post, error } = await supabase
+      .from('ut_thread_posts')
+      .insert({
+        user_id: user.id,
+        persona_id: body.personaIsSystem ? null : body.personaId || null,
+        topic: body.topic || '',
+        content: body.topic || '',
+        status: 'draft',
+      })
+      .select()
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ post });
+  }
+
   const { data: keyRow } = await supabase
     .from('ut_api_keys_vault')
     .select('encrypted_values')
@@ -76,7 +98,8 @@ export async function POST(request: Request) {
   }
 
   const resultStyle: string = ['basic', 'hook', 'persona'].includes(body.resultStyle) ? body.resultStyle : 'basic';
-  let systemPrompt = BASE_SYSTEM_PROMPT + RESULT_STYLE_ADDON[resultStyle];
+  const mode: string = ['casual', 'expert'].includes(body.mode) ? body.mode : 'casual';
+  let systemPrompt = BASE_SYSTEM_PROMPT + RESULT_STYLE_ADDON[resultStyle] + MODE_ADDON[mode];
 
   const complianceCategory = body.complianceCategory as string | undefined;
   if (complianceCategory && COMPLIANCE_RULES[complianceCategory]) {
@@ -84,6 +107,9 @@ export async function POST(request: Request) {
   }
 
   let userPrompt = `주제: ${body.topic || ''}`;
+  if (body.referenceText?.trim()) {
+    userPrompt += `\n\n참고 자료:\n${body.referenceText.trim()}`;
+  }
   let deeplink: string | null = null;
 
   if (product) {
@@ -112,13 +138,21 @@ export async function POST(request: Request) {
     deeplink = affiliateUrl;
   }
 
+  const useGoogleSearch = body.googleSearch === true;
+  const userParts: Record<string, unknown>[] = [{ text: userPrompt }];
+  if (body.mediaBase64 && body.mediaMimeType) {
+    userParts.push({ inlineData: { mimeType: body.mediaMimeType, data: body.mediaBase64 } });
+  }
+
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt + personaContext }] },
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: { responseMimeType: 'application/json' },
+      contents: [{ role: 'user', parts: userParts }],
+      // google_search 그라운딩은 responseMimeType:json과 함께 못 써서, 켜져 있으면 구조화 출력 강제를 빼고
+      // 시스템 프롬프트의 "JSON으로만 출력" 지침 + 아래 폴백 파싱에 맡긴다.
+      ...(useGoogleSearch ? { tools: [{ google_search: {} }] } : { generationConfig: { responseMimeType: 'application/json' } }),
     }),
   });
 

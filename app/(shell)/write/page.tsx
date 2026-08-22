@@ -58,6 +58,7 @@ function SmartEditor() {
   const [posts, setPosts] = useState<ThreadPost[]>([]);
   const [accounts, setAccounts] = useState<ThreadsAccount[]>([]);
   const [publishAccount, setPublishAccount] = useState<Record<string, string>>({});
+  const [shareToInstagram, setShareToInstagram] = useState<Record<string, boolean>>({});
   const [publishing, setPublishing] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +90,18 @@ function SmartEditor() {
   const [sourceKeywords, setSourceKeywords] = useState<string[]>([]);
   const [sourceLoading, setSourceLoading] = useState(false);
 
+  const [draftSubTab, setDraftSubTab] = useState<'casual' | 'expert' | 'manual'>('casual');
+  const [refUrl, setRefUrl] = useState('');
+  const [refYoutubeUrl, setRefYoutubeUrl] = useState('');
+  const [refText, setRefText] = useState('');
+  const [refLoading, setRefLoading] = useState(false);
+  const [refError, setRefError] = useState<string | null>(null);
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+
+  const [visionAnalysis, setVisionAnalysis] = useState(true);
+  const [googleSearch, setGoogleSearch] = useState(true);
+  const [showDetailSettings, setShowDetailSettings] = useState(false);
+
   function loadPosts() {
     fetch('/api/smart-editor')
       .then((r) => r.json())
@@ -108,6 +121,14 @@ function SmartEditor() {
     fetch('/api/affiliate-templates')
       .then((r) => r.json())
       .then((d) => setAffiliateTemplates([...(d.systemTemplates || []), ...(d.templates || [])]));
+    fetch('/api/editor-defaults')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.defaults) return;
+        setVisionAnalysis(d.defaults.vision_analysis);
+        setGoogleSearch(d.defaults.google_search);
+      })
+      .catch(() => {});
     loadPosts();
   }, []);
 
@@ -130,6 +151,35 @@ function SmartEditor() {
       .catch(() => setSourceKeywords([]))
       .finally(() => setSourceLoading(false));
   }, [topTab, sourceTab, sourceCategory]);
+
+  async function handleFetchReference() {
+    if (!refUrl.trim() && !refYoutubeUrl.trim()) return;
+    setRefLoading(true);
+    setRefError(null);
+    try {
+      const res = await fetch('/api/smart-editor/reference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: refUrl.trim() || undefined, youtubeUrl: refYoutubeUrl.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '가져오기 실패');
+      setRefText((prev) => (prev ? `${prev}\n\n${data.reference}` : data.reference));
+    } catch (err) {
+      setRefError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefLoading(false);
+    }
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
 
   async function handleCoupangSearch() {
     if (!coupangKeyword.trim()) return;
@@ -210,7 +260,7 @@ function SmartEditor() {
       const res = await fetch('/api/threads-accounts/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ postId, threadsAccountId: accountId }),
+        body: JSON.stringify({ postId, threadsAccountId: accountId, shareToInstagram: shareToInstagram[postId] || false }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '발행 실패');
@@ -251,6 +301,15 @@ function SmartEditor() {
         body.affiliateUrl = affiliateUrl;
         body.affiliateProductName = affiliateProductName;
       }
+      if (topTab === 'draft') {
+        body.mode = draftSubTab;
+        if (refText.trim()) body.referenceText = refText.trim();
+        body.googleSearch = googleSearch;
+        if (mediaFile && visionAnalysis) {
+          body.mediaBase64 = await fileToBase64(mediaFile);
+          body.mediaMimeType = mediaFile.type;
+        }
+      }
 
       const res = await fetch('/api/smart-editor', {
         method: 'POST',
@@ -263,6 +322,10 @@ function SmartEditor() {
       setSelectedProduct(null);
       setAffiliateUrl('');
       setAffiliateProductName('');
+      setRefUrl('');
+      setRefYoutubeUrl('');
+      setRefText('');
+      setMediaFile(null);
       loadPosts();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -311,55 +374,130 @@ function SmartEditor() {
 
           {topTab === 'draft' && (
             <div className="mb-3">
-              <div className="flex gap-1 mb-2 overflow-x-auto">
-                {SOURCE_TABS.map((t) => (
+              <div className="flex gap-2 mb-3">
+                {([
+                  ['casual', '간편 글 작성'],
+                  ['expert', '전문성글'],
+                  ['manual', '직접 작성'],
+                ] as const).map(([key, label]) => (
                   <button
-                    key={t.key}
-                    onClick={() => setSourceTab(t.key)}
-                    className={`flex-shrink-0 px-3 py-1.5 text-[11px] font-bold border ${sourceTab === t.key ? 'border-black bg-neutral-50' : 'border-border text-neutral-400'}`}
+                    key={key}
+                    onClick={() => setDraftSubTab(key)}
+                    className={`px-3 py-1.5 text-[11px] font-bold border ${draftSubTab === key ? 'border-black bg-neutral-50' : 'border-border text-neutral-400'}`}
                   >
-                    {t.label}
+                    {label}
                   </button>
                 ))}
               </div>
-              {sourceTab === 'datalab' && (
-                <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
-                  {SOURCE_CATEGORIES.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setSourceCategory(c)}
-                      className={`flex-shrink-0 px-2.5 py-1 text-[10px] font-bold ${sourceCategory === c ? 'bg-accent text-white' : 'bg-neutral-100 text-neutral-400'}`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
+
+              {draftSubTab !== 'manual' && (
+                <>
+                  <div className="flex gap-1 mb-2 overflow-x-auto">
+                    {SOURCE_TABS.map((t) => (
+                      <button
+                        key={t.key}
+                        onClick={() => setSourceTab(t.key)}
+                        className={`flex-shrink-0 px-3 py-1.5 text-[11px] font-bold border ${sourceTab === t.key ? 'border-black bg-neutral-50' : 'border-border text-neutral-400'}`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  {sourceTab === 'datalab' && (
+                    <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
+                      {SOURCE_CATEGORIES.map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setSourceCategory(c)}
+                          className={`flex-shrink-0 px-2.5 py-1 text-[10px] font-bold ${sourceCategory === c ? 'bg-accent text-white' : 'bg-neutral-100 text-neutral-400'}`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 border border-dashed border-border p-3 min-h-[44px]">
+                    {sourceLoading ? (
+                      <span className="text-[11px] text-neutral-400">불러오는 중...</span>
+                    ) : sourceKeywords.length === 0 ? (
+                      <span className="text-[11px] text-neutral-400">키워드가 없어요.</span>
+                    ) : (
+                      sourceKeywords.slice(0, 20).map((k, i) => (
+                        <button
+                          key={`${k}-${i}`}
+                          onClick={() => setTopic(k)}
+                          className="text-[11px] bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 font-bold"
+                        >
+                          {k}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <div className="text-[10px] text-neutral-400 mt-1 mb-3">키워드를 클릭하면 아래 주제란에 바로 채워져요.</div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <input
+                      value={refUrl}
+                      onChange={(e) => setRefUrl(e.target.value)}
+                      placeholder="URL 링크 참조 (https://...)"
+                      className="border border-border px-3 py-2 text-xs"
+                    />
+                    <input
+                      value={refYoutubeUrl}
+                      onChange={(e) => setRefYoutubeUrl(e.target.value)}
+                      placeholder="유튜브 링크 참조 (youtu.be/...)"
+                      className="border border-border px-3 py-2 text-xs"
+                    />
+                  </div>
+                  <button
+                    onClick={handleFetchReference}
+                    disabled={refLoading || (!refUrl.trim() && !refYoutubeUrl.trim())}
+                    className="w-full border border-border text-[11px] font-black py-2 mb-2"
+                  >
+                    {refLoading ? '가져오는 중...' : '📥 가져오기'}
+                  </button>
+                  {refError && <div className="text-xs text-red-500 mb-2">{refError}</div>}
+                  {refText && (
+                    <textarea
+                      value={refText}
+                      onChange={(e) => setRefText(e.target.value)}
+                      rows={3}
+                      className="w-full border border-border px-3 py-2 text-xs mb-3 bg-neutral-50"
+                    />
+                  )}
+
+                  <label className="text-xs font-bold text-neutral-500 mb-1 block">자료로 내용 추가하기 (이미지/동영상)</label>
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={(e) => setMediaFile(e.target.files?.[0] || null)}
+                    className="w-full text-xs mb-3"
+                  />
+                </>
               )}
-              <div className="flex flex-wrap gap-1.5 border border-dashed border-border p-3 min-h-[44px]">
-                {sourceLoading ? (
-                  <span className="text-[11px] text-neutral-400">불러오는 중...</span>
-                ) : sourceKeywords.length === 0 ? (
-                  <span className="text-[11px] text-neutral-400">키워드가 없어요.</span>
-                ) : (
-                  sourceKeywords.slice(0, 20).map((k, i) => (
-                    <button
-                      key={`${k}-${i}`}
-                      onClick={() => setTopic(k)}
-                      className="text-[11px] bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 font-bold"
-                    >
-                      {k}
-                    </button>
-                  ))
-                )}
-              </div>
-              <div className="text-[10px] text-neutral-400 mt-1 mb-2">키워드를 클릭하면 아래 주제란에 바로 채워져요.</div>
+
               <textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)"
-                rows={3}
+                placeholder={
+                  draftSubTab === 'manual'
+                    ? '완성된 글을 그대로 붙여넣으세요. AI 생성 없이 이 내용 그대로 초안으로 저장돼요.'
+                    : '어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)'
+                }
+                rows={draftSubTab === 'manual' ? 8 : 3}
                 className="w-full border border-border px-3 py-2.5 text-sm"
               />
+
+              {draftSubTab !== 'manual' && (
+                <div className="flex items-center justify-between mt-2">
+                  <div className="text-[10px] text-neutral-400">
+                    📸 미디어분석 {visionAnalysis ? 'ON' : 'OFF'} · 🔍 구글검색 {googleSearch ? 'ON' : 'OFF'}
+                  </div>
+                  <button onClick={() => setShowDetailSettings(true)} className="text-[11px] font-black border border-border px-3 py-1.5">
+                    ⚙ 세부설정
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -494,24 +632,71 @@ function SmartEditor() {
 
           {error && <div className="text-xs text-red-500 mb-3">{error}</div>}
 
-          <div className="text-xs font-bold text-neutral-500 mb-2">결과 스타일을 선택하면 바로 생성이 시작돼요</div>
-          <div className="grid grid-cols-3 gap-2">
-            {RESULT_STYLES.map((s) => (
-              <button
-                key={s.key}
-                onClick={() => handleGenerate(s.key)}
-                disabled={!canGenerate || generating}
-                className={`text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-accent text-white'}`}
-              >
-                {generating ? '생성 중...' : `${s.icon} ${s.label}`}
-              </button>
-            ))}
-          </div>
+          {topTab === 'draft' && draftSubTab === 'manual' ? (
+            <button
+              onClick={() => handleGenerate('basic')}
+              disabled={!canGenerate || generating}
+              className={`w-full text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-accent text-white'}`}
+            >
+              {generating ? '저장 중...' : '💾 초안으로 저장'}
+            </button>
+          ) : (
+            <>
+              <div className="text-xs font-bold text-neutral-500 mb-2">결과 스타일을 선택하면 바로 생성이 시작돼요</div>
+              <div className="grid grid-cols-3 gap-2">
+                {RESULT_STYLES.map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => handleGenerate(s.key)}
+                    disabled={!canGenerate || generating}
+                    className={`text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-accent text-white'}`}
+                  >
+                    {generating ? '생성 중...' : `${s.icon} ${s.label}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="text-[10px] text-neutral-400 mt-2">
             Gemini API 키가 필요해요 (<Link href="/onboarding" className="underline">등록하러 가기</Link>)
           </div>
         </div>
       </div>
+
+      {showDetailSettings && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowDetailSettings(false)}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">⚙ 세부설정</h2>
+            <div className="flex items-center justify-between text-xs mb-4">
+              <div className="font-black">
+                📸 첨부 미디어 AI 비전 분석
+                <div className="text-[10px] text-neutral-400 font-normal">이미지를 분석하여 글에 반영합니다.</div>
+              </div>
+              <button
+                onClick={() => setVisionAnalysis((v) => !v)}
+                className={`w-9 h-5 rounded-full relative flex-shrink-0 ${visionAnalysis ? 'bg-blue-600' : 'bg-neutral-300'}`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${visionAnalysis ? 'left-4.5' : 'left-0.5'}`} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between text-xs mb-6">
+              <div className="font-black">
+                🔍 실시간 구글 검색 활용
+                <div className="text-[10px] text-neutral-400 font-normal">최신 웹 검색 팩트체크 기반으로 작성합니다.</div>
+              </div>
+              <button
+                onClick={() => setGoogleSearch((v) => !v)}
+                className={`w-9 h-5 rounded-full relative flex-shrink-0 ${googleSearch ? 'bg-blue-600' : 'bg-neutral-300'}`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${googleSearch ? 'left-4.5' : 'left-0.5'}`} />
+              </button>
+            </div>
+            <button onClick={() => setShowDetailSettings(false)} className="w-full bg-accent text-white text-[11px] font-black py-3">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
 
       <h2 className="font-black text-sm mb-3">내 초안</h2>
       {posts.length === 0 ? (
@@ -555,6 +740,14 @@ function SmartEditor() {
                       </button>
                     ) : (
                       <>
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-neutral-500">
+                          <input
+                            type="checkbox"
+                            checked={!!shareToInstagram[p.id]}
+                            onChange={(e) => setShareToInstagram((prev) => ({ ...prev, [p.id]: e.target.checked }))}
+                          />
+                          📸 인스타그램 스토리에도 공유
+                        </label>
                         {accounts.length > 1 && (
                           <select
                             value={publishAccount[p.id] || accounts[0].id}

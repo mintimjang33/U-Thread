@@ -14,6 +14,9 @@ const SCOPES = [
   'threads_read_replies',
   'threads_manage_insights',
   'threads_keyword_search',
+  'threads_delete',
+  'threads_manage_mentions',
+  'threads_share_to_instagram',
 ].join(',');
 
 export default function ThreadsManagePage() {

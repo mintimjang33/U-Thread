@@ -13,6 +13,7 @@ type ThreadPost = {
   scheduled_at: string | null;
   publish_error: string | null;
   account_username: string | null;
+  threads_post_id: string | null;
 };
 type Account = { id: string; username: string | null; threads_user_id: string };
 
@@ -41,6 +42,7 @@ function ArchiveDashboard() {
   const [accountId, setAccountId] = useState('');
   const [search, setSearch] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   function load() {
     const params = new URLSearchParams();
@@ -61,6 +63,25 @@ function ArchiveDashboard() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, accountId, search]);
+
+  async function handleDelete(postId: string) {
+    if (!confirm('Threads에 발행된 원본 게시물이 실제로 삭제돼요. 계속할까요?')) return;
+    setDeletingId(postId);
+    try {
+      const res = await fetch('/api/threads-accounts/delete-post', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '삭제 실패');
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const totalCount = Object.values(statusCounts).reduce((a, b) => a + b, 0);
 
@@ -119,7 +140,16 @@ function ArchiveDashboard() {
                   <div className="text-xs text-red-500 mb-1">{p.publish_error}</div>
                 )}
                 {p.topic && <div className="text-xs text-neutral-500 mb-1">{p.topic}</div>}
-                <p className="text-sm whitespace-pre-wrap">{p.content}</p>
+                <p className="text-sm whitespace-pre-wrap mb-2">{p.content}</p>
+                {p.status === 'posted' && p.threads_post_id && (
+                  <button
+                    onClick={() => handleDelete(p.id)}
+                    disabled={deletingId === p.id}
+                    className="text-[11px] font-black text-red-500 border border-border px-3 py-1.5"
+                  >
+                    {deletingId === p.id ? '삭제 중...' : '🗑 Threads에서 삭제'}
+                  </button>
+                )}
               </div>
             );
           })}
