@@ -1,4 +1,6 @@
-// 네이버 데이터랩 쇼핑인사이트 API (developers.naver.com 공식, openapi.naver.com).
+// 네이버 데이터랩 쇼핑인사이트 API — 네이버가 2026-07-31부로 구버전 개발자센터(openapi.naver.com)
+// 신규 신청을 막고 NAVER API HUB(naverapihub.apigw.ntruss.com)로 이관했다.
+// 인증 헤더/엔드포인트가 구버전과 다름(X-NCP-APIGW-API-KEY-ID/KEY, /shopping/v1/categories).
 // 카테고리별 검색 클릭 추이(상대지수, 0~100)를 최근 기간으로 조회한다.
 const CATEGORY_CODES: Record<string, string> = {
   '패션의류': '50000000',
@@ -24,11 +26,11 @@ export async function getShoppingInsight(clientId: string, clientSecret: string,
   const startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
-  const res = await fetch('https://openapi.naver.com/v1/datalab/shopping/categories', {
+  const res = await fetch('https://naverapihub.apigw.ntruss.com/shopping/v1/categories', {
     method: 'POST',
     headers: {
-      'X-Naver-Client-Id': clientId,
-      'X-Naver-Client-Secret': clientSecret,
+      'X-NCP-APIGW-API-KEY-ID': clientId,
+      'X-NCP-APIGW-API-KEY': clientSecret,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
