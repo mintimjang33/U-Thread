@@ -13,6 +13,8 @@ type ThreadPost = {
   created_at: string;
   threads_account_id: string | null;
   affiliate_comment: string | null;
+  scheduled_at: string | null;
+  publish_error: string | null;
 };
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
 type AffiliateTemplate = { id: string; name: string; body: string };
@@ -67,6 +69,11 @@ function SmartEditor() {
   const [affiliateModalPost, setAffiliateModalPost] = useState<ThreadPost | null>(null);
   const [affiliateDraft, setAffiliateDraft] = useState('');
   const [savingAffiliate, setSavingAffiliate] = useState(false);
+
+  const [scheduleModalPost, setScheduleModalPost] = useState<ThreadPost | null>(null);
+  const [scheduleAccountId, setScheduleAccountId] = useState('');
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [scheduling, setScheduling] = useState(false);
 
   function loadPosts() {
     fetch('/api/smart-editor')
@@ -124,6 +131,41 @@ function SmartEditor() {
     } finally {
       setSavingAffiliate(false);
     }
+  }
+
+  function openScheduleModal(post: ThreadPost) {
+    setScheduleModalPost(post);
+    setScheduleAccountId(publishAccount[post.id] || accounts[0]?.id || '');
+    setScheduleAt('');
+  }
+
+  async function handleSchedule() {
+    if (!scheduleModalPost || !scheduleAccountId || !scheduleAt) return;
+    setScheduling(true);
+    try {
+      const res = await fetch('/api/thread-posts/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: scheduleModalPost.id,
+          scheduledAt: new Date(scheduleAt).toISOString(),
+          threadsAccountId: scheduleAccountId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '예약 실패');
+      setScheduleModalPost(null);
+      loadPosts();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setScheduling(false);
+    }
+  }
+
+  async function handleCancelSchedule(postId: string) {
+    await fetch(`/api/thread-posts/schedule?postId=${postId}`, { method: 'DELETE' });
+    loadPosts();
   }
 
   async function handlePublish(postId: string) {
@@ -408,39 +450,57 @@ function SmartEditor() {
                   {p.affiliate_comment}
                 </div>
               )}
-              {p.status === 'posted' ? (
-                <span className="text-[11px] font-black text-emerald-600">✔ 발행 완료</span>
-              ) : (
+              {p.status === 'posted' && <span className="text-[11px] font-black text-emerald-600">✔ 발행 완료</span>}
+              {p.status === 'publishing' && <span className="text-[11px] font-black text-amber-600">발행 중...</span>}
+              {p.status === 'scheduled' && (
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={() => openAffiliateModal(p)} className="text-[11px] font-black border border-border px-4 py-2">
-                    💰 제휴 타래 {p.affiliate_comment ? '수정' : '추가'}
+                  <span className="text-[11px] font-black text-blue-600">
+                    ⏰ {p.scheduled_at && new Date(p.scheduled_at).toLocaleString('ko-KR')} 예약됨
+                  </span>
+                  <button onClick={() => handleCancelSchedule(p.id)} className="text-[11px] font-bold text-red-500 border border-border px-3 py-1.5">
+                    예약 취소
                   </button>
-                  {accounts.length === 0 ? (
-                    <button disabled className="text-[11px] font-black text-neutral-300 border border-border px-4 py-2 cursor-not-allowed">
-                      쓰레드에 발행 (<Link href="/dashboard/threads-manage" className="underline">계정 연동 필요</Link>)
-                    </button>
-                  ) : (
-                    <>
-                      {accounts.length > 1 && (
-                        <select
-                          value={publishAccount[p.id] || accounts[0].id}
-                          onChange={(e) => setPublishAccount((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                          className="border border-border text-xs px-2 py-2"
-                        >
-                          {accounts.map((a) => (
-                            <option key={a.id} value={a.id}>@{a.username || a.threads_user_id}</option>
-                          ))}
-                        </select>
-                      )}
-                      <button
-                        onClick={() => handlePublish(p.id)}
-                        disabled={publishing === p.id}
-                        className="text-[11px] font-black text-white bg-black px-4 py-2"
-                      >
-                        {publishing === p.id ? '발행 중...' : '쓰레드에 발행'}
-                      </button>
-                    </>
+                </div>
+              )}
+              {(p.status === 'draft' || p.status === 'failed') && (
+                <div className="flex flex-col gap-2">
+                  {p.status === 'failed' && p.publish_error && (
+                    <div className="text-xs text-red-500">✕ 발행 실패: {p.publish_error}</div>
                   )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button onClick={() => openAffiliateModal(p)} className="text-[11px] font-black border border-border px-4 py-2">
+                      💰 제휴 타래 {p.affiliate_comment ? '수정' : '추가'}
+                    </button>
+                    {accounts.length === 0 ? (
+                      <button disabled className="text-[11px] font-black text-neutral-300 border border-border px-4 py-2 cursor-not-allowed">
+                        쓰레드에 발행 (<Link href="/dashboard/threads-manage" className="underline">계정 연동 필요</Link>)
+                      </button>
+                    ) : (
+                      <>
+                        {accounts.length > 1 && (
+                          <select
+                            value={publishAccount[p.id] || accounts[0].id}
+                            onChange={(e) => setPublishAccount((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                            className="border border-border text-xs px-2 py-2"
+                          >
+                            {accounts.map((a) => (
+                              <option key={a.id} value={a.id}>@{a.username || a.threads_user_id}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          onClick={() => handlePublish(p.id)}
+                          disabled={publishing === p.id}
+                          className="text-[11px] font-black text-white bg-black px-4 py-2"
+                        >
+                          {publishing === p.id ? '발행 중...' : '지금 발행'}
+                        </button>
+                        <button onClick={() => openScheduleModal(p)} className="text-[11px] font-black border border-border px-4 py-2">
+                          ⏰ 예약 발행
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -488,6 +548,42 @@ function SmartEditor() {
               <button onClick={() => setAffiliateModalPost(null)} className="flex-1 border border-border text-[11px] font-black py-3">취소</button>
               <button onClick={saveAffiliateComment} disabled={savingAffiliate} className="flex-1 bg-black text-white text-[11px] font-black py-3">
                 {savingAffiliate ? '저장 중...' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {scheduleModalPost && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setScheduleModalPost(null)}>
+          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">⏰ 예약 발행</h2>
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">발행 계정</label>
+            <select
+              value={scheduleAccountId}
+              onChange={(e) => setScheduleAccountId(e.target.value)}
+              className="w-full border border-border px-3 py-2.5 text-sm mb-3"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>@{a.username || a.threads_user_id}</option>
+              ))}
+            </select>
+            <label className="text-xs font-bold text-neutral-500 mb-1 block">예약 발행 시각</label>
+            <input
+              type="datetime-local"
+              value={scheduleAt}
+              onChange={(e) => setScheduleAt(e.target.value)}
+              min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+              className="w-full border border-border px-3 py-2.5 text-sm mb-4"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setScheduleModalPost(null)} className="flex-1 border border-border text-[11px] font-black py-3">취소</button>
+              <button
+                onClick={handleSchedule}
+                disabled={scheduling || !scheduleAccountId || !scheduleAt}
+                className="flex-1 bg-black text-white text-[11px] font-black py-3"
+              >
+                {scheduling ? '예약 중...' : '예약하기'}
               </button>
             </div>
           </div>

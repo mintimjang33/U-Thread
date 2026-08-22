@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '../../../../lib/supabase';
 import { getCurrentUser } from '../../../../lib/supabaseServerAuth';
-import { decryptVaultValue } from '../../../../lib/vaultCrypto';
+import { publishThreadPostNow } from '../../../../lib/publishThreadPost';
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -30,57 +30,19 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (!account) return NextResponse.json({ error: '연동된 Threads 계정을 찾을 수 없습니다.' }, { status: 404 });
 
-  const accessToken = decryptVaultValue(account.encrypted_access_token);
-
   try {
-    const createRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ media_type: 'TEXT', text: post.content, access_token: accessToken }),
-    });
-    const createJson = await createRes.json();
-    if (!createRes.ok || !createJson.id) throw new Error(createJson.error?.message || JSON.stringify(createJson));
-
-    const publishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ creation_id: createJson.id, access_token: accessToken }),
-    });
-    const publishJson = await publishRes.json();
-    if (!publishRes.ok || !publishJson.id) throw new Error(publishJson.error?.message || JSON.stringify(publishJson));
-
-    // 제휴 타래(2번째 타래 댓글)가 설정돼 있으면, 방금 발행한 글에 대한 답글로 이어서 발행한다.
-    if (post.affiliate_comment?.trim()) {
-      const replyCreateRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          media_type: 'TEXT',
-          text: post.affiliate_comment,
-          reply_to_id: publishJson.id,
-          access_token: accessToken,
-        }),
-      });
-      const replyCreateJson = await replyCreateRes.json();
-      if (replyCreateRes.ok && replyCreateJson.id) {
-        await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ creation_id: replyCreateJson.id, access_token: accessToken }),
-        });
-        // 제휴 타래 발행이 실패해도 본문 발행 자체는 이미 성공했으므로 에러로 처리하지 않는다.
-      }
-    }
+    const result = await publishThreadPostNow(post, account);
 
     await supabase
       .from('ut_thread_posts')
-      .update({ status: 'posted', threads_account_id: accountId })
+      .update({ status: 'posted', threads_account_id: accountId, publish_error: null })
       .eq('id', post.id)
       .eq('user_id', user.id);
 
-    return NextResponse.json({ ok: true, threadsPostId: publishJson.id });
+    return NextResponse.json({ ok: true, threadsPostId: result.threadsPostId });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    await supabase.from('ut_thread_posts').update({ status: 'failed', publish_error: message }).eq('id', post.id).eq('user_id', user.id);
     return NextResponse.json({ error: `발행 실패: ${message}` }, { status: 500 });
   }
 }
