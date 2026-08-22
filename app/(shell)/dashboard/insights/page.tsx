@@ -22,6 +22,7 @@ export default function InsightsPage() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [showLockModal, setShowLockModal] = useState(false);
   const [search, setSearch] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
   const [syncedAt, setSyncedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +80,12 @@ export default function InsightsPage() {
       <div className="flex items-center gap-3 mb-6">
         <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">트렌드 & 인사이트</h1>
-        <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full">트렌드 & 인사이트 사용법 보기</span>
+        <button
+          onClick={() => setShowHelp(true)}
+          className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full"
+        >
+          트렌드 & 인사이트 사용법 보기
+        </button>
       </div>
 
       <div className="flex items-center gap-4 mb-6">
@@ -224,6 +230,23 @@ export default function InsightsPage() {
           <p className="text-[10px] text-neutral-300 text-center mt-6">네이버 데이터랩 쇼핑인사이트 상대지수(0~100) 기반입니다.</p>
         )}
       </div>
+
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowHelp(false)}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">📖 트렌드 & 인사이트 사용법</h2>
+            <ol className="space-y-3 mb-6 text-xs leading-relaxed">
+              <li><b>데이터랩(무료)</b>: 카테고리 칩을 고르면 네이버 검색광고 기반 연관 키워드 TOP 순위가 나와요.</li>
+              <li><b>구글 트렌드 / 쇼핑 트렌드 / 실시간 뉴스</b>: 프리미엄 전용 탭이에요. 잠금 아이콘을 누르면 구독 안내가 떠요.</li>
+              <li>상단 검색창에 키워드를 입력하고 &quot;실시간 데이터 재동기화&quot;를 누르면 최신 데이터로 다시 불러와요.</li>
+              <li>여기서 찾은 키워드는 <b>스마트 에디터</b>의 원고 작성 탭에서도 바로 불러와 쓸 수 있어요.</li>
+            </ol>
+            <button onClick={() => setShowHelp(false)} className="w-full bg-accent text-white text-[11px] font-black py-3">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
 
       {showLockModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowLockModal(false)}>

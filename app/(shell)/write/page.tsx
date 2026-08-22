@@ -41,6 +41,15 @@ const RESULT_STYLES = [
   { key: 'persona', icon: '🎭', label: '내 페르소나 (커스텀 톤)' },
 ] as const;
 
+const SOURCE_TABS = [
+  { key: 'realtime', label: '🔥 실시간 트렌드' },
+  { key: 'datalab', label: '📊 데이터랩' },
+  { key: 'google', label: '🌐 구글 트렌드' },
+] as const;
+type SourceTabKey = (typeof SOURCE_TABS)[number]['key'];
+
+const SOURCE_CATEGORIES = ['패션의류', '패션잡화', '화장품/미용', '디지털/가전', '가구/인테리어', '출산/육아', '식품', '스포츠/레저', '생활/건강', '여가/생활편의', '도서'];
+
 function SmartEditor() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [systemPersonas, setSystemPersonas] = useState<SystemPersona[]>([]);
@@ -75,6 +84,11 @@ function SmartEditor() {
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduling, setScheduling] = useState(false);
 
+  const [sourceTab, setSourceTab] = useState<SourceTabKey>('realtime');
+  const [sourceCategory, setSourceCategory] = useState(SOURCE_CATEGORIES[0]);
+  const [sourceKeywords, setSourceKeywords] = useState<string[]>([]);
+  const [sourceLoading, setSourceLoading] = useState(false);
+
   function loadPosts() {
     fetch('/api/smart-editor')
       .then((r) => r.json())
@@ -96,6 +110,26 @@ function SmartEditor() {
       .then((d) => setAffiliateTemplates([...(d.systemTemplates || []), ...(d.templates || [])]));
     loadPosts();
   }, []);
+
+  useEffect(() => {
+    if (topTab !== 'draft') return;
+    setSourceLoading(true);
+    const req =
+      sourceTab === 'realtime'
+        ? fetch('/api/trends/realtime')
+        : sourceTab === 'datalab'
+          ? fetch(`/api/trends/datalab?category=${encodeURIComponent(sourceCategory)}`)
+          : fetch('/api/trends/google');
+
+    req
+      .then((r) => r.json())
+      .then((d) => {
+        if (sourceTab === 'datalab') setSourceKeywords((d.keywords || []).map((k: { keyword: string }) => k.keyword));
+        else setSourceKeywords((d.items || []).map((i: { title: string }) => i.title));
+      })
+      .catch(() => setSourceKeywords([]))
+      .finally(() => setSourceLoading(false));
+  }, [topTab, sourceTab, sourceCategory]);
 
   async function handleCoupangSearch() {
     if (!coupangKeyword.trim()) return;
@@ -276,13 +310,57 @@ function SmartEditor() {
           )}
 
           {topTab === 'draft' && (
-            <textarea
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)"
-              rows={3}
-              className="w-full border border-border px-3 py-2.5 text-sm mb-3"
-            />
+            <div className="mb-3">
+              <div className="flex gap-1 mb-2 overflow-x-auto">
+                {SOURCE_TABS.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setSourceTab(t.key)}
+                    className={`flex-shrink-0 px-3 py-1.5 text-[11px] font-bold border ${sourceTab === t.key ? 'border-black bg-neutral-50' : 'border-border text-neutral-400'}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              {sourceTab === 'datalab' && (
+                <div className="flex gap-1.5 mb-2 overflow-x-auto pb-1">
+                  {SOURCE_CATEGORIES.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setSourceCategory(c)}
+                      className={`flex-shrink-0 px-2.5 py-1 text-[10px] font-bold ${sourceCategory === c ? 'bg-accent text-white' : 'bg-neutral-100 text-neutral-400'}`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1.5 border border-dashed border-border p-3 min-h-[44px]">
+                {sourceLoading ? (
+                  <span className="text-[11px] text-neutral-400">불러오는 중...</span>
+                ) : sourceKeywords.length === 0 ? (
+                  <span className="text-[11px] text-neutral-400">키워드가 없어요.</span>
+                ) : (
+                  sourceKeywords.slice(0, 20).map((k, i) => (
+                    <button
+                      key={`${k}-${i}`}
+                      onClick={() => setTopic(k)}
+                      className="text-[11px] bg-neutral-100 hover:bg-neutral-200 px-2.5 py-1 font-bold"
+                    >
+                      {k}
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="text-[10px] text-neutral-400 mt-1 mb-2">키워드를 클릭하면 아래 주제란에 바로 채워져요.</div>
+              <textarea
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="어떤 주제로 글을 쓸까요? (예: 아침 루틴 바꾸고 생긴 변화)"
+                rows={3}
+                className="w-full border border-border px-3 py-2.5 text-sm"
+              />
+            </div>
           )}
 
           {topTab === 'compliance' && (

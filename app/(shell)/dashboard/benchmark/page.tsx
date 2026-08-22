@@ -31,6 +31,7 @@ export default function BenchmarkPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const [showHelp, setShowHelp] = useState(false);
   const [showExtension, setShowExtension] = useState(false);
   const [extensionKey, setExtensionKey] = useState<string | null>(null);
   const [issuingKey, setIssuingKey] = useState(false);
@@ -171,7 +172,12 @@ export default function BenchmarkPage() {
       <div className="flex items-center gap-3 mb-6">
         <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">벤치마킹 보관함</h1>
-        <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full">벤치마킹 보관함 사용법 보기</span>
+        <button
+          onClick={() => setShowHelp(true)}
+          className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full"
+        >
+          벤치마킹 보관함 사용법 보기
+        </button>
       </div>
 
       <div className="flex items-center justify-between mb-3">
@@ -367,6 +373,24 @@ export default function BenchmarkPage() {
               </div>
             )}
             <button onClick={() => setShowFolders(false)} className="w-full border border-border text-[11px] font-black py-3">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showHelp && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowHelp(false)}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-4">📖 벤치마킹 보관함 사용법</h2>
+            <ol className="space-y-3 mb-6 text-xs leading-relaxed">
+              <li><b>📁 폴더 관리</b>: 주제별로 폴더를 만들어 글을 정리할 수 있어요.</li>
+              <li><b>🔗 링크로 스크랩</b>: Threads 게시물 URL을 붙여넣으면 자동으로 내용을 가져와 저장해요.</li>
+              <li><b>+ 수동 등록</b>: 텍스트를 직접 붙여넣거나 사진/영상을 첨부해서 저장할 수 있어요.</li>
+              <li><b>🔑 익스텐션 키</b>: 크롬 익스텐션을 설치하면 Threads 글을 드래그 선택 → 우클릭 한 번으로 저장돼요.</li>
+              <li>저장된 글은 <b>페르소나 관리</b>에서 &quot;벤치마킹에서 추출&quot;로 말투 분석에도 쓸 수 있어요.</li>
+            </ol>
+            <button onClick={() => setShowHelp(false)} className="w-full bg-accent text-white text-[11px] font-black py-3">
               닫기
             </button>
           </div>
