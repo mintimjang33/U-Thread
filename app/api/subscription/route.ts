@@ -1,16 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '../../../lib/supabase';
 import { getCurrentUser } from '../../../lib/supabaseServerAuth';
+import { getIsSubscribed } from '../../../lib/subscription';
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
-  const supabase = getSupabaseServerClient();
-  const { data } = await supabase.from('ut_subscriptions').select('*').eq('user_id', user.id).maybeSingle();
-
-  const isSubscribed = !!data?.is_subscribed && (!data.expires_at || new Date(data.expires_at) > new Date());
-  return NextResponse.json({ isSubscribed, expiresAt: data?.expires_at || null });
+  const { isSubscribed, expiresAt } = await getIsSubscribed(user.id);
+  return NextResponse.json({ isSubscribed, expiresAt });
 }
 
 // TODO: 토스페이먼츠 정기결제(빌링키) 연동 전까지는, "구독하기"를 누르면 결제 없이
