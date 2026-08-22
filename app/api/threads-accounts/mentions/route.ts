@@ -28,9 +28,18 @@ export async function GET(request: Request) {
     const res = await fetch(
       `https://graph.threads.net/v1.0/${account.threads_user_id}/mentions?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`
     );
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error?.message || JSON.stringify(json));
-    return NextResponse.json({ mentions: json.data || [] });
+    const rawText = await res.text();
+    let json: Record<string, unknown> = {};
+    try {
+      json = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      throw new Error(`Threads 응답을 해석하지 못했어요 (${res.status}): ${rawText.slice(0, 200) || '(빈 응답)'}`);
+    }
+    if (!res.ok) {
+      const err = json.error as { message?: string } | undefined;
+      throw new Error(err?.message || JSON.stringify(json));
+    }
+    return NextResponse.json({ mentions: (json.data as unknown[]) || [] });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
