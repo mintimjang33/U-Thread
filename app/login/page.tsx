@@ -36,7 +36,7 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4">
       <div className="w-full max-w-sm bg-white border border-border p-8">
         <div className="text-center mb-8">
-          <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center font-black mx-auto mb-3">U</div>
+          <div className="w-10 h-10 rounded-full bg-accent text-white flex items-center justify-center font-black mx-auto mb-3">U</div>
           <h1 className="font-black text-lg">유쓰레드 로그인</h1>
         </div>
 
@@ -72,7 +72,7 @@ export default function LoginPage() {
             className="w-full border border-border px-3 py-3 text-sm"
           />
           {error && <div className="text-xs text-red-500">{error}</div>}
-          <button type="submit" disabled={loading} className="w-full bg-black text-white py-3 text-[11px] font-black">
+          <button type="submit" disabled={loading} className="w-full bg-accent text-white py-3 text-[11px] font-black">
             {loading ? '접속 중...' : '시스템 접속 (LOGIN)'}
           </button>
         </form>

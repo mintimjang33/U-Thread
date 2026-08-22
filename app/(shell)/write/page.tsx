@@ -249,7 +249,7 @@ function SmartEditor() {
             <button
               key={key}
               onClick={() => setTopTab(key)}
-              className={`flex-1 py-3 text-xs font-black ${topTab === key ? 'bg-black text-white' : 'text-neutral-400'}`}
+              className={`flex-1 py-3 text-xs font-black ${topTab === key ? 'bg-accent text-white' : 'text-neutral-400'}`}
             >
               {label}
             </button>
@@ -320,7 +320,7 @@ function SmartEditor() {
                   placeholder="상품 키워드 (예: 무선 청소기)"
                   className="flex-1 border border-border px-3 py-2 text-sm"
                 />
-                <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-black text-white text-xs font-black px-4">
+                <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-accent text-white text-xs font-black px-4">
                   {coupangSearching ? '검색 중...' : '검색'}
                 </button>
               </div>
@@ -423,7 +423,7 @@ function SmartEditor() {
                 key={s.key}
                 onClick={() => handleGenerate(s.key)}
                 disabled={!canGenerate || generating}
-                className={`text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-black text-white'}`}
+                className={`text-[11px] font-black py-3 ${!canGenerate ? 'bg-neutral-100 text-neutral-300 cursor-not-allowed' : 'bg-accent text-white'}`}
               >
                 {generating ? '생성 중...' : `${s.icon} ${s.label}`}
               </button>
@@ -510,7 +510,7 @@ function SmartEditor() {
 
       {affiliateModalPost && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setAffiliateModalPost(null)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-1">💰 제휴 타래 추가</h2>
             <p className="text-xs text-neutral-400 mb-4">발행 시 본문 게시물에 대한 답글(2번째 타래)로 자동으로 이어서 발행돼요.</p>
 
@@ -546,7 +546,7 @@ function SmartEditor() {
 
             <div className="flex gap-2">
               <button onClick={() => setAffiliateModalPost(null)} className="flex-1 border border-border text-[11px] font-black py-3">취소</button>
-              <button onClick={saveAffiliateComment} disabled={savingAffiliate} className="flex-1 bg-black text-white text-[11px] font-black py-3">
+              <button onClick={saveAffiliateComment} disabled={savingAffiliate} className="flex-1 bg-accent text-white text-[11px] font-black py-3">
                 {savingAffiliate ? '저장 중...' : '저장'}
               </button>
             </div>
@@ -556,7 +556,7 @@ function SmartEditor() {
 
       {scheduleModalPost && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setScheduleModalPost(null)}>
-          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">⏰ 예약 발행</h2>
             <label className="text-xs font-bold text-neutral-500 mb-1 block">발행 계정</label>
             <select
@@ -581,7 +581,7 @@ function SmartEditor() {
               <button
                 onClick={handleSchedule}
                 disabled={scheduling || !scheduleAccountId || !scheduleAt}
-                className="flex-1 bg-black text-white text-[11px] font-black py-3"
+                className="flex-1 bg-accent text-white text-[11px] font-black py-3"
               >
                 {scheduling ? '예약 중...' : '예약하기'}
               </button>
@@ -597,7 +597,7 @@ export default function SmartEditorPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">스마트 에디터</h1>
       </div>
       <PremiumGate message="AI 스마트 에디터 기능은 프리미엄 멤버십 구독 후 이용할 수 있습니다.">

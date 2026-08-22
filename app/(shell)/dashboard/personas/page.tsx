@@ -144,7 +144,7 @@ function PersonaTab() {
           rows={6}
           className="w-full border border-border px-3 py-2.5 text-sm mb-4"
         />
-        <button onClick={handleCreate} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3">
+        <button onClick={handleCreate} disabled={saving} className="w-full bg-accent text-white text-[11px] font-black py-3">
           {saving ? '저장 중...' : '페르소나 추가'}
         </button>
       </div>
@@ -199,7 +199,7 @@ function PersonaTab() {
 
       {showRoleModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowRoleModal(false)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">🔍 롤모델 계정 검색</h2>
             <input
               value={roleHandle}
@@ -210,7 +210,7 @@ function PersonaTab() {
             <p className="text-[11px] text-neutral-400 mb-4">공개 프로필에서 가져올 수 있는 정보(소개글)만으로 스타일을 분석해요. 정보가 부족하면 실패할 수 있어요 — 그럴 땐 벤치마킹에서 추출을 이용해주세요.</p>
             <div className="flex gap-2">
               <button onClick={() => setShowRoleModal(false)} className="flex-1 border border-border text-[11px] font-black py-3">취소</button>
-              <button onClick={handleExtractFromProfile} disabled={extracting} className="flex-1 bg-black text-white text-[11px] font-black py-3">
+              <button onClick={handleExtractFromProfile} disabled={extracting} className="flex-1 bg-accent text-white text-[11px] font-black py-3">
                 {extracting ? '분석 중...' : '스타일 추출'}
               </button>
             </div>
@@ -320,7 +320,7 @@ function AffiliateTemplateTab() {
           rows={4}
           className="w-full border border-border px-3 py-2.5 text-sm mb-3"
         />
-        <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3 mb-6">
+        <button onClick={handleSave} disabled={saving} className="w-full bg-accent text-white text-[11px] font-black py-3 mb-6">
           💾 나만의 제휴 템플릿으로 저장
         </button>
 
@@ -329,7 +329,7 @@ function AffiliateTemplateTab() {
           <div className="text-[11px] text-neutral-400 mb-2">실제 발행 시 모습</div>
           <div className="border border-border p-3 text-xs">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-5 h-5 rounded-full bg-black text-white flex items-center justify-center text-[10px]">@</span>
+              <span className="w-5 h-5 rounded-full bg-accent text-white flex items-center justify-center text-[10px]">@</span>
               <span className="font-bold">내 쓰레드 계정 (1번째 타래 댓글)</span>
             </div>
             <div className="text-neutral-400 mb-2">방금 전 · Threads Reply</div>
@@ -380,7 +380,7 @@ export default function PersonasPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">페르소나 관리</h1>
       </div>
 

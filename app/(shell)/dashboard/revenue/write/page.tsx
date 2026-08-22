@@ -83,7 +83,7 @@ export default function RevenueWritePage() {
           <button type="button" onClick={() => router.back()} className="flex-1 border border-border text-[11px] font-black py-3">
             취소
           </button>
-          <button type="submit" disabled={saving} className="flex-1 bg-black text-white text-[11px] font-black py-3">
+          <button type="submit" disabled={saving} className="flex-1 bg-accent text-white text-[11px] font-black py-3">
             {saving ? '등록 중...' : '인증 글 등록하기'}
           </button>
         </div>

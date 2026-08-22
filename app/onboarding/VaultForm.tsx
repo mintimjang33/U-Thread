@@ -59,7 +59,7 @@ export function VaultForm({ provider, serviceName, fields }: { provider: string;
         {error && <div className="text-xs text-red-500 mb-3">{error}</div>}
         {saved && <div className="text-xs text-green-600 mb-3">저장됐어요.</div>}
 
-        <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3">
+        <button onClick={handleSave} disabled={saving} className="w-full bg-accent text-white text-[11px] font-black py-3">
           {saving ? '저장 중...' : '볼트에 저장하기'}
         </button>
       </div>

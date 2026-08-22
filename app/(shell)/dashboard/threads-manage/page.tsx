@@ -69,7 +69,7 @@ function ThreadsManageInner() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">내 쓰레드 관리</h1>
       </div>
 
@@ -97,7 +97,7 @@ function ThreadsManageInner() {
         <p className="text-sm text-neutral-600 mb-6">
           Meta Threads 계정을 연동하면 스마트/멀티 에디터에서 직접 게시물을 발행하고 관리할 수 있어요.
         </p>
-        <button onClick={handleConnect} className="bg-black text-white text-[11px] font-black px-6 py-3">
+        <button onClick={handleConnect} className="bg-accent text-white text-[11px] font-black px-6 py-3">
           @ THREADS 계정 {accounts.length > 0 ? '추가 연동' : '연동하기'}
         </button>
         {!isSubscribed && (
@@ -107,12 +107,12 @@ function ThreadsManageInner() {
 
       {showUpgrade && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowUpgrade(false)}>
-          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm font-bold mb-6">
               다중 Threads 계정 연동은 프리미엄 멤버십 전용입니다. 무료 회원은 1개 계정까지 연동할 수 있어요.
             </p>
             <div className="flex gap-2">
-              <Link href="/purchase" className="flex-1 text-center bg-black text-white text-[11px] font-black py-3">
+              <Link href="/purchase" className="flex-1 text-center bg-accent text-white text-[11px] font-black py-3">
                 구독하기
               </Link>
               <button onClick={() => setShowUpgrade(false)} className="flex-1 border border-border text-[11px] font-black py-3">

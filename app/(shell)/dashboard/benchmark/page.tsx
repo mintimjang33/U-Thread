@@ -169,7 +169,7 @@ export default function BenchmarkPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">벤치마킹 보관함</h1>
         <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full">벤치마킹 보관함 사용법 보기</span>
       </div>
@@ -186,13 +186,13 @@ export default function BenchmarkPage() {
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <button
           onClick={() => setActiveFolder('all')}
-          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'all' ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'all' ? 'bg-accent text-white' : 'border border-border text-neutral-500'}`}
         >
           전체 보기
         </button>
         <button
           onClick={() => setActiveFolder('unfiled')}
-          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'unfiled' ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+          className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === 'unfiled' ? 'bg-accent text-white' : 'border border-border text-neutral-500'}`}
         >
           미분류
         </button>
@@ -200,7 +200,7 @@ export default function BenchmarkPage() {
           <button
             key={f.id}
             onClick={() => setActiveFolder(f.id)}
-            className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === f.id ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+            className={`px-3 py-1.5 text-[11px] font-bold ${activeFolder === f.id ? 'bg-accent text-white' : 'border border-border text-neutral-500'}`}
           >
             {f.name}
           </button>
@@ -225,7 +225,7 @@ export default function BenchmarkPage() {
         <button onClick={() => setShowScrape(true)} className="bg-blue-600 text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
           🔗 링크로 스크랩
         </button>
-        <button onClick={() => setShowManual(true)} className="bg-black text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
+        <button onClick={() => setShowManual(true)} className="bg-accent text-white px-4 py-2.5 text-xs font-black flex items-center gap-1">
           + 수동 등록
         </button>
         <button onClick={handleOpenExtensionModal} className="border border-border px-4 py-2.5 text-xs font-bold flex items-center gap-1">🔑 익스텐션 키</button>
@@ -269,7 +269,7 @@ export default function BenchmarkPage() {
 
       {showManual && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowManual(false)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">수동 등록</h2>
             <label className="text-xs font-bold text-neutral-500 mb-1 block">저장할 폴더</label>
             <select value={manualFolder} onChange={(e) => setManualFolder(e.target.value)} className="w-full border border-border px-3 py-2.5 text-sm mb-3">
@@ -302,7 +302,7 @@ export default function BenchmarkPage() {
               <button onClick={() => setShowManual(false)} className="flex-1 border border-border text-[11px] font-black py-3">
                 취소
               </button>
-              <button onClick={handleManualSave} disabled={saving} className="flex-1 bg-black text-white text-[11px] font-black py-3">
+              <button onClick={handleManualSave} disabled={saving} className="flex-1 bg-accent text-white text-[11px] font-black py-3">
                 {saving ? '저장 중...' : '보관함에 저장'}
               </button>
             </div>
@@ -312,7 +312,7 @@ export default function BenchmarkPage() {
 
       {showScrape && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowScrape(false)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">🔗 스레드 링크로 즉시 스크랩</h2>
             <label className="text-xs font-bold text-neutral-500 mb-1 block">스레드 글 링크 (URL)</label>
             <input
@@ -343,7 +343,7 @@ export default function BenchmarkPage() {
 
       {showFolders && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowFolders(false)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">📁 벤치마킹 폴더 관리</h2>
             <div className="flex gap-2 mb-4">
               <input
@@ -352,7 +352,7 @@ export default function BenchmarkPage() {
                 placeholder="새 폴더 이름 입력..."
                 className="flex-1 border border-border px-3 py-2.5 text-sm"
               />
-              <button onClick={handleCreateFolder} className="bg-black text-white text-[11px] font-black px-4">+ 생성</button>
+              <button onClick={handleCreateFolder} className="bg-accent text-white text-[11px] font-black px-4">+ 생성</button>
             </div>
             {folders.length === 0 ? (
               <div className="text-xs text-neutral-400 text-center py-4">생성된 폴더가 없습니다.</div>
@@ -375,7 +375,7 @@ export default function BenchmarkPage() {
 
       {showExtension && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowExtension(false)}>
-          <div className="bg-white p-8 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-md w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-1">🔑 익스텐션 연동 키</h2>
             <p className="text-xs text-neutral-400 mb-4">
               크롬 익스텐션을 설치하고 이 키를 붙여넣으면, Threads 글에서 우클릭으로 바로 벤치마킹 보관함에 저장할 수 있어요.
@@ -395,7 +395,7 @@ export default function BenchmarkPage() {
               <div>2. 익스텐션 팝업에서 위 키를 붙여넣고 저장</div>
               <div>3. Threads 게시물에서 텍스트를 선택하고 우클릭 → &quot;유쓰레드 벤치마킹에 저장&quot;</div>
             </div>
-            <button onClick={() => setShowExtension(false)} className="w-full bg-black text-white text-[11px] font-black py-3">
+            <button onClick={() => setShowExtension(false)} className="w-full bg-accent text-white text-[11px] font-black py-3">
               닫기
             </button>
           </div>

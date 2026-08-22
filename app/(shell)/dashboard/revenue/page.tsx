@@ -27,10 +27,10 @@ export default function RevenuePage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <span className="w-2.5 h-2.5 bg-black inline-block" />
+          <span className="w-2.5 h-2.5 bg-accent inline-block" />
           <h1 className="text-xl font-black">수익 인증 라운지</h1>
         </div>
-        <Link href="/dashboard/revenue/write" className="bg-black text-white text-[11px] font-black px-5 py-2.5">
+        <Link href="/dashboard/revenue/write" className="bg-accent text-white text-[11px] font-black px-5 py-2.5">
           + 수익 인증하기
         </Link>
       </div>
@@ -66,7 +66,7 @@ export default function RevenuePage() {
             <button
               key={n}
               onClick={() => setPage(n)}
-              className={`w-8 h-8 text-xs font-bold ${page === n ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+              className={`w-8 h-8 text-xs font-bold ${page === n ? 'bg-accent text-white' : 'border border-border text-neutral-500'}`}
             >
               {n}
             </button>

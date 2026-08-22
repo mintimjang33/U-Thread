@@ -77,7 +77,7 @@ export default function InsightsPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">트렌드 & 인사이트</h1>
         <span className="text-[11px] bg-purple-100 text-purple-700 font-bold px-3 py-1 rounded-full">트렌드 & 인사이트 사용법 보기</span>
       </div>
@@ -119,7 +119,7 @@ export default function InsightsPage() {
             <button
               key={c}
               onClick={() => setCategory(c)}
-              className={`px-4 py-2 text-[13px] font-black ${category === c ? 'bg-black text-white' : 'bg-white border border-neutral-200 text-neutral-500'}`}
+              className={`px-4 py-2 text-[13px] font-black ${category === c ? 'bg-accent text-white' : 'bg-white border border-neutral-200 text-neutral-500'}`}
               style={{ borderRadius: 14 }}
             >
               {c}
@@ -227,12 +227,12 @@ export default function InsightsPage() {
 
       {showLockModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowLockModal(false)}>
-          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <p className="text-sm font-bold mb-6">
               프리미엄 구독이 필요합니다 — 실시간 뉴스, 구글/쇼핑 트렌드 기능은 프리미엄 회원 전용입니다.
             </p>
             <div className="flex gap-2">
-              <Link href="/purchase" className="flex-1 text-center bg-black text-white text-[11px] font-black py-3">
+              <Link href="/purchase" className="flex-1 text-center bg-accent text-white text-[11px] font-black py-3">
                 구독하기
               </Link>
               <button onClick={() => setShowLockModal(false)} className="flex-1 border border-border text-[11px] font-black py-3">

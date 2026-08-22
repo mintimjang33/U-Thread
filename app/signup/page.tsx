@@ -93,7 +93,7 @@ export default function SignupPage() {
 
           {error && <div className="col-span-2 text-xs text-red-500">{error}</div>}
 
-          <button type="submit" disabled={loading} className="col-span-2 bg-black text-white py-3 text-[11px] font-black mt-2">
+          <button type="submit" disabled={loading} className="col-span-2 bg-accent text-white py-3 text-[11px] font-black mt-2">
             {loading ? '처리 중...' : '회원가입 완료'}
           </button>
         </form>

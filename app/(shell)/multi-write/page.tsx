@@ -157,7 +157,7 @@ export default function MultiEditorPage() {
       <div className="border border-border p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-black flex items-center justify-center">1</span>
+            <span className="w-5 h-5 rounded-full bg-accent text-white text-[11px] font-black flex items-center justify-center">1</span>
             <h2 className="font-black text-sm">발행 계정 선택 및 페르소나 매핑</h2>
           </div>
           <div className="text-[11px] text-neutral-400">
@@ -201,7 +201,7 @@ export default function MultiEditorPage() {
       {/* 2. 글 작성 유형 선택 */}
       <div className="border border-border p-6 mb-6">
         <div className="flex items-center gap-2 mb-4">
-          <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-black flex items-center justify-center">2</span>
+          <span className="w-5 h-5 rounded-full bg-accent text-white text-[11px] font-black flex items-center justify-center">2</span>
           <h2 className="font-black text-sm">글 작성 유형 선택</h2>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -226,19 +226,19 @@ export default function MultiEditorPage() {
       <div className="border border-border p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-black flex items-center justify-center">3</span>
+            <span className="w-5 h-5 rounded-full bg-accent text-white text-[11px] font-black flex items-center justify-center">3</span>
             <h2 className="font-black text-sm">원고 내용 입력 및 미디어 첨부</h2>
           </div>
           <div className="flex text-[11px] font-bold border border-border">
             <button
               onClick={() => setInputMode('shared')}
-              className={`px-3 py-1.5 ${inputMode === 'shared' ? 'bg-black text-white' : 'text-neutral-400'}`}
+              className={`px-3 py-1.5 ${inputMode === 'shared' ? 'bg-accent text-white' : 'text-neutral-400'}`}
             >
               🌐 전체 공통 입력
             </button>
             <button
               onClick={() => setInputMode('individual')}
-              className={`px-3 py-1.5 ${inputMode === 'individual' ? 'bg-black text-white' : 'text-neutral-400'}`}
+              className={`px-3 py-1.5 ${inputMode === 'individual' ? 'bg-accent text-white' : 'text-neutral-400'}`}
             >
               👤 계정별 개별 입력
             </button>
@@ -256,7 +256,7 @@ export default function MultiEditorPage() {
                 placeholder="상품 키워드 (예: 무선 청소기)"
                 className="flex-1 border border-border px-3 py-2 text-sm"
               />
-              <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-black text-white text-xs font-black px-4">
+              <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-accent text-white text-xs font-black px-4">
                 {coupangSearching ? '검색 중...' : '검색'}
               </button>
             </div>
@@ -290,7 +290,7 @@ export default function MultiEditorPage() {
         )}
 
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <label className="bg-black text-white text-[11px] font-black px-3 py-2 cursor-pointer">
+          <label className="bg-accent text-white text-[11px] font-black px-3 py-2 cursor-pointer">
             🖼 사진/영상 첨부 ({mediaCount}개)
             <input
               type="file"
@@ -331,7 +331,7 @@ export default function MultiEditorPage() {
       <div className="border border-border p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-black text-white text-[11px] font-black flex items-center justify-center">5</span>
+            <span className="w-5 h-5 rounded-full bg-accent text-white text-[11px] font-black flex items-center justify-center">5</span>
             <h2 className="font-black text-sm">글 작성</h2>
           </div>
           <div className="text-[10px] text-neutral-400">
@@ -350,7 +350,7 @@ export default function MultiEditorPage() {
           </div>
           <button
             onClick={() => setShowSettings((v) => !v)}
-            className="bg-black text-white text-[11px] font-black px-4 py-2"
+            className="bg-accent text-white text-[11px] font-black px-4 py-2"
           >
             ⚙ 세부설정
           </button>
@@ -398,7 +398,7 @@ export default function MultiEditorPage() {
                     key={n}
                     onClick={() => setThreadSegments(n)}
                     className={`w-7 h-7 text-[11px] font-bold ${
-                      threadSegments === n ? 'bg-black text-white' : 'border border-border text-neutral-400'
+                      threadSegments === n ? 'bg-accent text-white' : 'border border-border text-neutral-400'
                     }`}
                   >
                     {n}
@@ -444,7 +444,7 @@ export default function MultiEditorPage() {
         <button
           onClick={handleGenerate}
           disabled={!canGenerate || generating}
-          className={`w-full text-[11px] font-black py-4 ${!canGenerate ? 'bg-neutral-300 text-white cursor-not-allowed' : 'bg-black text-white'}`}
+          className={`w-full text-[11px] font-black py-4 ${!canGenerate ? 'bg-neutral-300 text-white cursor-not-allowed' : 'bg-accent text-white'}`}
         >
           {generating ? '생성 중...' : `✨ 선택한 ${selectedAccounts.size}개 계정 맞춤 글 일괄 생성하기`}
         </button>

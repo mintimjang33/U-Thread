@@ -89,7 +89,7 @@ export default function PurchasePage() {
           청약철회(환불) 제한 조건 동의 (필수)
         </label>
 
-        <button onClick={handlePay} disabled={loading} className="w-full bg-black text-white text-[11px] font-black py-4">
+        <button onClick={handlePay} disabled={loading} className="w-full bg-accent text-white text-[11px] font-black py-4">
           {loading ? '처리 중...' : `💳 유쓰레드 정기 구독 (${plan === 'yearly' ? '365일' : '30일'})`}
         </button>
         <div className="text-[10px] text-neutral-300 text-center mt-3">

@@ -84,17 +84,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <aside className="w-64 border-r border-border flex flex-col">
         <Link href="/" className="block px-6 py-6">
           <div className="flex items-center gap-2 mb-1">
-            <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-black text-xs">U</div>
+            <div className="w-6 h-6 rounded-full bg-accent text-white flex items-center justify-center font-black text-xs">U</div>
             <span className="font-black tracking-tight">유쓰레드</span>
           </div>
           <div className="text-[10px] text-neutral-400 font-bold pl-8">스마트 에디터 허브</div>
         </Link>
 
         <div className="px-4 space-y-2 mb-4">
-          <Link href="/write" className="block text-center bg-black text-white text-[11px] font-black py-3.5">
+          <Link href="/write" className="block text-center bg-accent hover:bg-accent-hover text-white text-[11px] font-black py-3.5 rounded-card-sm transition-colors">
             + 스마트 에디터 작성
           </Link>
-          <Link href="/multi-write" className="block text-center bg-slate-800 text-white text-[11px] font-black py-3.5">
+          <Link href="/multi-write" className="block text-center bg-zinc-800 hover:bg-zinc-900 text-white text-[11px] font-black py-3.5 rounded-card-sm transition-colors">
             ⚡ 멀티 에디터 작성
           </Link>
         </div>
@@ -106,10 +106,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center justify-between px-4 py-3 text-[11px] font-black ${
-                  active ? 'bg-active-bg text-black' : 'text-neutral-500 hover:text-black'
+                className={`flex items-center justify-between px-4 py-3 text-[11px] font-black rounded-card-sm ${
+                  active ? 'bg-accent-soft text-accent' : 'text-neutral-500 hover:text-black'
                 }`}
-                style={{ borderRadius: 2.2 }}
               >
                 {item.label}
                 {item.premium && <span className="text-[9px] text-neutral-300">🔒</span>}
@@ -128,7 +127,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {showHelp && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowHelp(false)} />
-              <div className="absolute bottom-full left-4 mb-2 w-56 bg-white border border-border shadow-lg z-50 p-2">
+              <div className="absolute bottom-full left-4 mb-2 w-56 bg-white border border-border shadow-lg z-50 p-2 rounded-card-sm">
                 <div className="text-[10px] font-black text-neutral-400 px-2 py-1">연동 가이드 보기</div>
                 {HELP_ITEMS.map((h) => (
                   <button
@@ -173,9 +172,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </Link>
           <div className="flex items-center gap-2">
             {isSubscribed ? (
-              <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1.5">프리미엄</span>
+              <span className="bg-emerald-600 text-white text-[10px] font-black px-2.5 py-1.5 rounded-pill">프리미엄</span>
             ) : (
-              <Link href="/purchase" className="bg-blue-600 text-white text-[10px] font-black px-2.5 py-1.5">구독</Link>
+              <Link href="/purchase" className="bg-accent hover:bg-accent-hover text-white text-[10px] font-black px-2.5 py-1.5 rounded-pill transition-colors">구독</Link>
             )}
           </div>
         </div>
@@ -199,22 +198,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {helpDetail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setHelpDetail(null)}>
-          <div className="bg-white p-8 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white p-8 max-w-sm w-full rounded-card" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-black mb-4">📖 {helpDetail.label}</h2>
             <ol className="space-y-3 mb-6">
               {helpDetail.steps.map((s, i) => (
                 <li key={i} className="flex gap-3 text-xs leading-relaxed">
-                  <span className="w-5 h-5 rounded-full bg-black text-white text-[10px] font-black flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                  <span className="w-5 h-5 rounded-full bg-accent text-white text-[10px] font-black flex items-center justify-center flex-shrink-0">{i + 1}</span>
                   <span>{s}</span>
                 </li>
               ))}
             </ol>
             <div className="flex gap-2">
-              <button onClick={() => setHelpDetail(null)} className="flex-1 border border-border text-[11px] font-black py-3">닫기</button>
+              <button onClick={() => setHelpDetail(null)} className="flex-1 border border-border text-[11px] font-black py-3 rounded-card-sm">닫기</button>
               <Link
                 href={helpDetail.href}
                 onClick={() => setHelpDetail(null)}
-                className="flex-1 text-center bg-black text-white text-[11px] font-black py-3"
+                className="flex-1 text-center bg-accent hover:bg-accent-hover text-white text-[11px] font-black py-3 rounded-card-sm transition-colors"
               >
                 연동하러 가기
               </Link>

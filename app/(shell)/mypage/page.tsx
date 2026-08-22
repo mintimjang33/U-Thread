@@ -58,7 +58,7 @@ function AccountTab() {
         <label className="text-xs font-bold text-neutral-500 mb-1 block">새 비밀번호 교체</label>
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="변경하지 않으려면 비워두세요" className="w-full border border-border px-3 py-2.5 text-sm mb-3" />
         {msg && <div className="text-xs text-neutral-500 mb-3">{msg}</div>}
-        <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3">
+        <button onClick={handleSave} disabled={saving} className="w-full bg-accent text-white text-[11px] font-black py-3">
           {saving ? '저장 중...' : '수정 사항 저장하기'}
         </button>
       </div>
@@ -86,7 +86,7 @@ function AiSettingsTab() {
           <div className="text-sm font-bold">Google Gemini API 키</div>
           <div className={`text-xs mt-1 ${hasKey ? 'text-emerald-600' : 'text-red-500'}`}>{hasKey ? '● 연동됨' : '● 미연동 상태'}</div>
         </div>
-        <Link href="/onboarding" className="bg-black text-white text-[11px] font-black px-4 py-2.5">
+        <Link href="/onboarding" className="bg-accent text-white text-[11px] font-black px-4 py-2.5">
           {hasKey ? '키 재설정' : '키 등록하기'}
         </Link>
       </div>
@@ -200,7 +200,7 @@ function EditorFormatTab() {
               <button
                 key={n}
                 onClick={() => setThreadSegments(n)}
-                className={`w-8 h-8 text-[11px] font-bold ${threadSegments === n ? 'bg-black text-white' : 'border border-border text-neutral-400'}`}
+                className={`w-8 h-8 text-[11px] font-bold ${threadSegments === n ? 'bg-accent text-white' : 'border border-border text-neutral-400'}`}
               >
                 {n}
               </button>
@@ -255,7 +255,7 @@ function EditorFormatTab() {
       </div>
 
       {msg && <div className="text-xs text-neutral-500 mt-4">{msg}</div>}
-      <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white text-[11px] font-black py-3.5 mt-6">
+      <button onClick={handleSave} disabled={saving} className="w-full bg-accent text-white text-[11px] font-black py-3.5 mt-6">
         {saving ? '저장 중...' : '설정 저장하기 ➔'}
       </button>
     </div>
@@ -267,7 +267,7 @@ function LockedTab({ message }: { message: string }) {
     <div className="max-w-lg border border-border p-10 text-center">
       <div className="text-2xl mb-3">🔒</div>
       <p className="text-sm text-neutral-600 mb-6">{message}</p>
-      <Link href="/purchase" className="inline-block bg-black text-white text-[11px] font-black px-6 py-3">
+      <Link href="/purchase" className="inline-block bg-accent text-white text-[11px] font-black px-6 py-3">
         30일 프리미엄 구독 (월 33,000원)
       </Link>
     </div>
@@ -289,7 +289,7 @@ function AffiliateSettingsTab() {
         <h2 className="font-black text-sm mb-1">🛒 쿠팡 파트너스 (Coupang Partners) API 연동</h2>
         <p className="text-xs text-neutral-400 mb-4">가입하신 쿠팡 파트너스 계정의 Access Key와 Secret Key를 등록하여 쿠파스 전용 포스팅 생성 및 실시간 트래킹 딥링크 발급을 연동합니다.</p>
         <div className={`text-xs mb-3 ${coupangKey ? 'text-emerald-600' : 'text-red-500'}`}>{coupangKey ? '● 연동됨' : '● 미연동 상태'}</div>
-        <Link href="/onboarding/coupang" className="block text-center bg-black text-white text-[11px] font-black py-3">
+        <Link href="/onboarding/coupang" className="block text-center bg-accent text-white text-[11px] font-black py-3">
           쿠파스 키 등록 / 재설정
         </Link>
       </div>
@@ -297,7 +297,7 @@ function AffiliateSettingsTab() {
         <h2 className="font-black text-sm mb-1">🛍️ 토스쇼핑 (Toss Shopping) API 연동</h2>
         <p className="text-xs text-neutral-400 mb-4">발급받은 토스쇼핑의 Access Key, Secret Key 및 파트너 ID(publisherId)를 등록하여 실시간 특가 상품 소싱 및 쉐어링크 발급을 연동합니다.</p>
         <div className={`text-xs mb-3 ${tossKey ? 'text-emerald-600' : 'text-red-500'}`}>{tossKey ? '● 연동됨' : '● 미연동 상태'}</div>
-        <Link href="/onboarding/toss" className="block text-center bg-black text-white text-[11px] font-black py-3">
+        <Link href="/onboarding/toss" className="block text-center bg-accent text-white text-[11px] font-black py-3">
           토스키 등록 / 재설정
         </Link>
       </div>
@@ -332,7 +332,7 @@ function SubscriptionTab() {
       {!isSubscribed && (
         <p className="text-xs text-neutral-500 mb-4">현재 활성화된 프리미엄 구독이 없습니다. 구독을 시작하여 모든 기능을 제한 없이 이용해 보세요.</p>
       )}
-      <Link href="/purchase" className="block text-center bg-black text-white text-[11px] font-black py-3.5">
+      <Link href="/purchase" className="block text-center bg-accent text-white text-[11px] font-black py-3.5">
         {isSubscribed ? '구독 관리' : '30일 프리미엄 구독 시작하기 (월 33,000원)'}
       </Link>
     </div>
@@ -345,7 +345,7 @@ export default function MyPage() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
-        <span className="w-2.5 h-2.5 bg-black inline-block" />
+        <span className="w-2.5 h-2.5 bg-accent inline-block" />
         <h1 className="text-xl font-black">마이페이지 설정</h1>
       </div>
 
@@ -354,7 +354,7 @@ export default function MyPage() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2.5 text-xs font-black ${tab === t ? 'bg-black text-white' : 'border border-border text-neutral-500'}`}
+            className={`px-4 py-2.5 text-xs font-black ${tab === t ? 'bg-accent text-white' : 'border border-border text-neutral-500'}`}
           >
             {t}
           </button>
