@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "유쓰레드 벤치마킹 저장",
+  "version": "1.0",
+  "description": "Threads 게시물을 드래그 선택해서 우클릭 한 번으로 유쓰레드 벤치마킹 보관함에 저장합니다.",
+  "permissions": ["contextMenus", "storage", "activeTab"],
+  "host_permissions": ["https://u-thread.vercel.app/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "유쓰레드 벤치마킹"
+  }
+}

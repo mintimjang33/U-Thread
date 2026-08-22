@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>유쓰레드 벤치마킹</title>
+<style>
+  body { width: 280px; font-family: -apple-system, "Malgun Gothic", sans-serif; padding: 16px; margin: 0; }
+  h1 { font-size: 13px; font-weight: 900; margin: 0 0 8px; }
+  p { font-size: 11px; color: #737373; line-height: 1.5; margin: 0 0 12px; }
+  textarea { width: 100%; box-sizing: border-box; font-size: 11px; font-family: monospace; padding: 8px; border: 1px solid #e5e5e5; border-radius: 4px; resize: none; }
+  button { width: 100%; margin-top: 8px; padding: 10px; font-size: 11px; font-weight: 900; color: #fff; background: #7c3aed; border: none; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #6d28d9; }
+  #status { font-size: 11px; color: #16a34a; margin-top: 8px; min-height: 14px; }
+  a { color: #7c3aed; }
+</style>
+</head>
+<body>
+  <h1>🔑 유쓰레드 익스텐션 키</h1>
+  <p>
+    <a href="https://u-thread.vercel.app/dashboard/benchmark" target="_blank">벤치마킹 보관함 → 🔑 익스텐션 키</a>
+    에서 발급받은 키를 붙여넣어줘.
+  </p>
+  <textarea id="key" rows="3" placeholder="여기에 키를 붙여넣으세요"></textarea>
+  <button id="save">저장</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
