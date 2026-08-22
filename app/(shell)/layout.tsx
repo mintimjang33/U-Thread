@@ -82,13 +82,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen bg-white text-black">
       <aside className="w-64 border-r border-border flex flex-col">
-        <div className="px-6 py-6">
+        <Link href="/" className="block px-6 py-6">
           <div className="flex items-center gap-2 mb-1">
             <div className="w-6 h-6 rounded-full bg-black text-white flex items-center justify-center font-black text-xs">U</div>
             <span className="font-black tracking-tight">유쓰레드</span>
           </div>
           <div className="text-[10px] text-neutral-400 font-bold pl-8">스마트 에디터 허브</div>
-        </div>
+        </Link>
 
         <div className="px-4 space-y-2 mb-4">
           <Link href="/write" className="block text-center bg-black text-white text-[11px] font-black py-3.5">

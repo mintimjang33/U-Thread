@@ -37,24 +37,27 @@ export default function LandingPage() {
   return (
     <div className="bg-white text-black">
       <header className="flex items-center justify-between px-8 py-5 border-b border-border">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center font-black text-sm">U</div>
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-accent text-white flex items-center justify-center font-black text-sm">U</div>
           <span className="font-black text-lg tracking-tight">유쓰레드</span>
-        </div>
-        <Link href="/login" className="px-5 py-2 bg-black text-white text-[11px] font-black">
+        </Link>
+        <Link href="/login" className="px-5 py-2 bg-accent hover:bg-accent-hover text-white text-[11px] font-black rounded-pill transition-colors">
           LOGIN
         </Link>
       </header>
 
       <section className="text-center px-6 py-24 max-w-3xl mx-auto">
-        <h1 className="text-4xl md:text-5xl font-black leading-tight mb-6">
-          퍼스널 브랜딩과 수익화를<br />동시에 달성하세요.
+        <div className="inline-block bg-accent-soft text-accent text-[11px] font-black px-4 py-1.5 rounded-pill mb-6">
+          ZERO-TRUST AI CONTENT ORCHESTRATION
+        </div>
+        <h1 className="text-4xl md:text-5xl font-black leading-tight mb-6 break-keep">
+          퍼스널 브랜딩과 수익화를 동시에 달성하세요.
         </h1>
-        <p className="text-neutral-600 leading-relaxed mb-10">
+        <p className="text-neutral-600 leading-relaxed mb-10 break-keep">
           기계적인 AI 글쓰기에 시간을 낭비하지 마세요. 유쓰레드는 알고리즘 페널티 없이
           당신의 영향력을 극대화하는 가장 완벽한 프리미엄 콘텐츠 오케스트레이션입니다.
         </p>
-        <Link href="/signup" className="inline-block px-8 py-4 bg-black text-white text-[11px] font-black">
+        <Link href="/signup" className="inline-block px-8 py-4 bg-accent hover:bg-accent-hover text-white text-[11px] font-black rounded-pill transition-colors">
           유쓰레드 시작하기
         </Link>
       </section>
@@ -62,8 +65,8 @@ export default function LandingPage() {
       <section className="bg-neutral-50 py-20 px-6">
         <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-6">
           {painPoints.map((p) => (
-            <div key={p.n} className="bg-white border border-border p-8">
-              <div className="text-xs font-black text-neutral-400 mb-3">PAIN POINT #{p.n}</div>
+            <div key={p.n} className="bg-white border border-border p-8" style={{ borderRadius: 'var(--radius)' }}>
+              <div className="w-8 h-8 rounded-full bg-accent-soft text-accent flex items-center justify-center text-xs font-black mb-4">{p.n}</div>
               <h3 className="font-black text-lg mb-3">{p.title}</h3>
               <p className="text-sm text-neutral-600 leading-relaxed">{p.body}</p>
             </div>
@@ -76,8 +79,8 @@ export default function LandingPage() {
         <p className="text-neutral-600 mb-14">유쓰레드만이 가진 압도적인 생성AI 기술의 격차를 확인하세요.</p>
         <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-6">
           {coreTech.map((c) => (
-            <div key={c.label} className="border border-border p-8 text-left">
-              <div className="text-xs font-black text-neutral-400 mb-3">{c.label}</div>
+            <div key={c.label} className="border border-border p-8 text-left" style={{ borderRadius: 'var(--radius)' }}>
+              <div className="text-xs font-black text-accent mb-3">{c.label}</div>
               <h3 className="font-black text-lg mb-3">{c.title}</h3>
               <p className="text-sm text-neutral-600 leading-relaxed">{c.desc}</p>
             </div>
@@ -85,24 +88,24 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="bg-black text-white py-16 px-6">
+      <section className="bg-accent text-white py-16 px-6">
         <div className="max-w-4xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
           {stats.map((s) => (
             <div key={s.label}>
               <div className="text-3xl font-black mb-1">{s.value}</div>
-              <div className="text-xs text-neutral-400">{s.label}</div>
+              <div className="text-xs text-violet-200">{s.label}</div>
             </div>
           ))}
         </div>
       </section>
 
       <section className="text-center px-6 py-24 max-w-2xl mx-auto">
-        <h2 className="text-2xl font-black mb-4">가장 진보된 형태의 파이프라인, 이제 당신이 직접 증명해 보세요.</h2>
+        <h2 className="text-2xl font-black mb-4 break-keep">가장 진보된 형태의 파이프라인, 이제 당신이 직접 증명해 보세요.</h2>
         <p className="text-neutral-600 mb-10">
           단순히 영혼 없는 글을 찍어내는 낡은 방식에서 탈피하세요. 유쓰레드는 팔로워의 신뢰를 무너뜨리지 않으면서도,
           당신의 수익화 목표를 가장 기술적이고 정교하게 달성해 냅니다.
         </p>
-        <Link href="/signup" className="inline-block px-8 py-4 bg-black text-white text-[11px] font-black">
+        <Link href="/signup" className="inline-block px-8 py-4 bg-accent hover:bg-accent-hover text-white text-[11px] font-black rounded-pill transition-colors">
           유쓰레드 시작하기
         </Link>
       </section>
