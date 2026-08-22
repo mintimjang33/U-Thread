@@ -65,13 +65,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [helpDetail, setHelpDetail] = useState<(typeof HELP_ITEMS)[number] | null>(null);
 
   useEffect(() => {
-    Promise.all(
-      BYOK_ITEMS.filter((b) => b.provider).map((b) =>
+    Promise.all([
+      ...BYOK_ITEMS.filter((b) => b.provider).map((b) =>
         fetch(`/api/keys?provider=${b.provider}`)
           .then((r) => r.json())
           .then((d) => [b.key, !!d.hasKey] as const)
-      )
-    ).then((entries) => setConnected(Object.fromEntries(entries)));
+      ),
+      fetch('/api/threads-accounts')
+        .then((r) => r.json())
+        .then((d) => ['threads', !!d.accounts?.length] as const)
+        .catch(() => ['threads', false] as const),
+    ]).then((entries) => setConnected(Object.fromEntries(entries)));
 
     fetch('/api/subscription')
       .then((r) => r.json())
