@@ -61,6 +61,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [connected, setConnected] = useState<Record<string, boolean>>({});
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [helpDetail, setHelpDetail] = useState<(typeof HELP_ITEMS)[number] | null>(null);
 
@@ -80,6 +81,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     fetch('/api/subscription')
       .then((r) => r.json())
       .then((d) => setIsSubscribed(!!d.isSubscribed))
+      .catch(() => {});
+
+    fetch('/api/admin/check')
+      .then((r) => r.json())
+      .then((d) => setIsAdmin(!!d.isAdmin))
       .catch(() => {});
   }, []);
 
@@ -119,6 +125,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </Link>
             );
           })}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className={`flex items-center justify-between px-4 py-3 text-[11px] font-black rounded-card-sm ${
+                pathname === '/admin' ? 'bg-accent-soft text-accent' : 'text-neutral-500 hover:text-black'
+              }`}
+            >
+              🛠 관리자
+            </Link>
+          )}
         </nav>
 
         <div className="px-4 pt-3 relative">
