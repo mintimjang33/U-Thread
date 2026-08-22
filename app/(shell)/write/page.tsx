@@ -15,6 +15,7 @@ type ThreadPost = {
   affiliate_comment: string | null;
   scheduled_at: string | null;
   publish_error: string | null;
+  thread_segments: string[] | null;
 };
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string };
 type AffiliateTemplate = { id: string; name: string; body: string };
@@ -100,6 +101,7 @@ function SmartEditor() {
 
   const [visionAnalysis, setVisionAnalysis] = useState(true);
   const [googleSearch, setGoogleSearch] = useState(true);
+  const [threadSegments, setThreadSegments] = useState(1);
   const [showDetailSettings, setShowDetailSettings] = useState(false);
 
   function loadPosts() {
@@ -127,6 +129,7 @@ function SmartEditor() {
         if (!d.defaults) return;
         setVisionAnalysis(d.defaults.vision_analysis);
         setGoogleSearch(d.defaults.google_search);
+        setThreadSegments(d.defaults.thread_segments || 1);
       })
       .catch(() => {});
     loadPosts();
@@ -305,6 +308,7 @@ function SmartEditor() {
         body.mode = draftSubTab;
         if (refText.trim()) body.referenceText = refText.trim();
         body.googleSearch = googleSearch;
+        body.threadSegments = threadSegments;
         if (mediaFile && visionAnalysis) {
           body.mediaBase64 = await fileToBase64(mediaFile);
           body.mediaMimeType = mediaFile.type;
@@ -491,7 +495,7 @@ function SmartEditor() {
               {draftSubTab !== 'manual' && (
                 <div className="flex items-center justify-between mt-2">
                   <div className="text-[10px] text-neutral-400">
-                    📸 미디어분석 {visionAnalysis ? 'ON' : 'OFF'} · 🔍 구글검색 {googleSearch ? 'ON' : 'OFF'}
+                    📸 미디어분석 {visionAnalysis ? 'ON' : 'OFF'} · 🔍 구글검색 {googleSearch ? 'ON' : 'OFF'} · 🧵 {threadSegments}단
                   </div>
                   <button onClick={() => setShowDetailSettings(true)} className="text-[11px] font-black border border-border px-3 py-1.5">
                     ⚙ 세부설정
@@ -691,6 +695,20 @@ function SmartEditor() {
                 <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${googleSearch ? 'left-4.5' : 'left-0.5'}`} />
               </button>
             </div>
+            <div className="text-xs mb-6">
+              <div className="font-black mb-2">🧵 스레드 타래 갯수 (1~10단)</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setThreadSegments(n)}
+                    className={`w-7 h-7 text-[11px] font-bold ${threadSegments === n ? 'bg-accent text-white' : 'border border-border text-neutral-400'}`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button onClick={() => setShowDetailSettings(false)} className="w-full bg-accent text-white text-[11px] font-black py-3">
               닫기
             </button>
@@ -707,6 +725,16 @@ function SmartEditor() {
             <div key={p.id} className="border border-border p-4">
               <div className="text-xs text-neutral-400 mb-2">{p.topic} · {new Date(p.created_at).toLocaleString('ko-KR')}</div>
               <p className="text-sm whitespace-pre-wrap mb-3">{p.content}</p>
+              {p.thread_segments && p.thread_segments.length > 0 && (
+                <div className="space-y-2 mb-3">
+                  {p.thread_segments.map((seg, i) => (
+                    <div key={i} className="text-sm whitespace-pre-wrap bg-neutral-50 border border-border p-2">
+                      <span className="text-[10px] font-bold text-neutral-400">🧵 {i + 2}번째 타래</span>
+                      <p>{seg}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
               {p.affiliate_comment && (
                 <div className="text-xs bg-neutral-50 border border-border p-2 mb-3">
                   <span className="font-bold text-neutral-500">💰 제휴 타래(2번째 댓글): </span>

@@ -1,7 +1,13 @@
 import { getSupabaseServerClient } from './supabase';
 import { decryptVaultValue } from './vaultCrypto';
 
-type ThreadPost = { id: string; content: string; affiliate_comment: string | null; share_to_instagram?: boolean };
+type ThreadPost = {
+  id: string;
+  content: string;
+  affiliate_comment: string | null;
+  share_to_instagram?: boolean;
+  thread_segments?: string[] | null;
+};
 type ThreadsAccount = { threads_user_id: string; encrypted_access_token: string };
 
 // 실제 Threads Graph API로 게시물(+제휴 타래가 있으면 답글까지)을 발행한다.
@@ -29,6 +35,31 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
   const publishJson = await publishRes.json();
   if (!publishRes.ok || !publishJson.id) throw new Error(publishJson.error?.message || JSON.stringify(publishJson));
 
+  // 타래 다단 생성: 2번째 타래부터 이전 타래에 답글로 순차 체이닝 발행한다.
+  let lastId = publishJson.id;
+  for (const segment of post.thread_segments || []) {
+    if (!segment?.trim()) continue;
+    try {
+      const segCreateRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media_type: 'TEXT', text: segment, reply_to_id: lastId, access_token: accessToken }),
+      });
+      const segCreateJson = await segCreateRes.json();
+      if (!segCreateRes.ok || !segCreateJson.id) break; // 중간 타래 실패시 이후 타래/제휴댓글은 중단(본문 발행은 무효화하지 않음)
+      const segPublishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creation_id: segCreateJson.id, access_token: accessToken }),
+      });
+      const segPublishJson = await segPublishRes.json();
+      if (!segPublishRes.ok || !segPublishJson.id) break;
+      lastId = segPublishJson.id;
+    } catch {
+      break;
+    }
+  }
+
   if (post.affiliate_comment?.trim()) {
     const replyCreateRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
       method: 'POST',
@@ -36,7 +67,7 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
       body: JSON.stringify({
         media_type: 'TEXT',
         text: post.affiliate_comment,
-        reply_to_id: publishJson.id,
+        reply_to_id: lastId,
         access_token: accessToken,
       }),
     });

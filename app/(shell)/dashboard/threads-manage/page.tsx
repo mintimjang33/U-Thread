@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 type ThreadsAccount = { id: string; username: string | null; threads_user_id: string; token_expires_at: string | null };
+type Mention = { id: string; text: string; username: string; permalink: string; timestamp: string };
 
 const REDIRECT_URI = 'https://u-thread.vercel.app/api/auth/threads/callback';
 const SCOPES = [
@@ -34,6 +35,14 @@ function ThreadsManageInner() {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
   const appId = process.env.NEXT_PUBLIC_THREADS_APP_ID;
+
+  const [mentionsAccount, setMentionsAccount] = useState<ThreadsAccount | null>(null);
+  const [mentions, setMentions] = useState<Mention[]>([]);
+  const [mentionsLoading, setMentionsLoading] = useState(false);
+  const [mentionsError, setMentionsError] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState<Record<string, string>>({});
+  const [replyingId, setReplyingId] = useState<string | null>(null);
+  const [repliedIds, setRepliedIds] = useState<Set<string>>(new Set());
 
   function load() {
     fetch('/api/threads-accounts')
@@ -69,6 +78,41 @@ function ThreadsManageInner() {
     load();
   }
 
+  function openMentions(account: ThreadsAccount) {
+    setMentionsAccount(account);
+    setMentions([]);
+    setMentionsError(null);
+    setRepliedIds(new Set());
+    setMentionsLoading(true);
+    fetch(`/api/threads-accounts/mentions?accountId=${account.id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(d.error);
+        setMentions(d.mentions || []);
+      })
+      .catch((err) => setMentionsError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setMentionsLoading(false));
+  }
+
+  async function handleReplyMention(mentionId: string) {
+    if (!mentionsAccount || !replyDraft[mentionId]?.trim()) return;
+    setReplyingId(mentionId);
+    try {
+      const res = await fetch('/api/threads-accounts/mentions/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: mentionsAccount.id, mentionId, text: replyDraft[mentionId] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '답글 실패');
+      setRepliedIds((prev) => new Set(prev).add(mentionId));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReplyingId(null);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
@@ -90,7 +134,10 @@ function ThreadsManageInner() {
                   </div>
                 )}
               </div>
-              <button onClick={() => handleDisconnect(a.id)} className="text-xs text-red-500 font-bold">연동 해제</button>
+              <div className="flex items-center gap-3">
+                <button onClick={() => openMentions(a)} className="text-xs text-neutral-500 font-bold">💬 멘션함</button>
+                <button onClick={() => handleDisconnect(a.id)} className="text-xs text-red-500 font-bold">연동 해제</button>
+              </div>
             </div>
           ))}
         </div>
@@ -107,6 +154,53 @@ function ThreadsManageInner() {
           <div className="text-[10px] text-neutral-400 mt-3">무료 회원은 1개 계정까지 연동할 수 있어요.</div>
         )}
       </div>
+
+      {mentionsAccount && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setMentionsAccount(null)}>
+          <div className="bg-white p-8 max-w-lg w-full max-h-[80vh] overflow-y-auto rounded-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-black mb-1">💬 @{mentionsAccount.username || mentionsAccount.threads_user_id} 멘션함</h2>
+            <p className="text-xs text-neutral-400 mb-4">이 계정을 언급한 공개 게시물이에요. 답글을 달 수 있어요.</p>
+            {mentionsLoading ? (
+              <div className="text-sm text-neutral-400 text-center py-10">불러오는 중...</div>
+            ) : mentionsError ? (
+              <div className="text-xs text-red-500">{mentionsError}</div>
+            ) : mentions.length === 0 ? (
+              <div className="text-sm text-neutral-400 text-center py-10">아직 언급된 게시물이 없어요.</div>
+            ) : (
+              <div className="space-y-3">
+                {mentions.map((m) => (
+                  <div key={m.id} className="border border-border p-3">
+                    <div className="text-xs text-neutral-400 mb-1">@{m.username} · {new Date(m.timestamp).toLocaleString('ko-KR')}</div>
+                    <p className="text-sm whitespace-pre-wrap mb-2">{m.text}</p>
+                    {repliedIds.has(m.id) ? (
+                      <div className="text-[11px] font-bold text-emerald-600">✔ 답글 완료</div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          value={replyDraft[m.id] || ''}
+                          onChange={(e) => setReplyDraft((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                          placeholder="답글 작성..."
+                          className="flex-1 border border-border px-2.5 py-1.5 text-xs"
+                        />
+                        <button
+                          onClick={() => handleReplyMention(m.id)}
+                          disabled={replyingId === m.id}
+                          className="bg-accent text-white text-[11px] font-black px-3"
+                        >
+                          {replyingId === m.id ? '전송 중...' : '답글'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setMentionsAccount(null)} className="w-full border border-border text-[11px] font-black py-3 mt-4">
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
 
       {showUpgrade && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setShowUpgrade(false)}>

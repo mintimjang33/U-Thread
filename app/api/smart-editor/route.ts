@@ -99,7 +99,11 @@ export async function POST(request: Request) {
 
   const resultStyle: string = ['basic', 'hook', 'persona'].includes(body.resultStyle) ? body.resultStyle : 'basic';
   const mode: string = ['casual', 'expert'].includes(body.mode) ? body.mode : 'casual';
+  const threadSegments = Math.min(10, Math.max(1, Number(body.threadSegments) || 1));
   let systemPrompt = BASE_SYSTEM_PROMPT + RESULT_STYLE_ADDON[resultStyle] + MODE_ADDON[mode];
+  if (threadSegments > 1) {
+    systemPrompt += `\n\n[타래 다단 생성] 이 글은 총 ${threadSegments}개의 타래(스레드)로 이어서 발행돼야 한다. 위의 JSON 출력 규칙 대신, 아래 형식으로만 출력해라: {"segments": ["1번째 타래 내용", "2번째 타래 내용", ...]}. segments 배열은 반드시 정확히 ${threadSegments}개여야 하고, 각 타래는 앞뒤 맥락이 자연스럽게 이어지되 하나씩 읽어도 의미가 통해야 한다.`;
+  }
 
   const complianceCategory = body.complianceCategory as string | undefined;
   if (complianceCategory && COMPLIANCE_RULES[complianceCategory]) {
@@ -164,8 +168,15 @@ export async function POST(request: Request) {
   const json = await res.json();
   const rawText = (json.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || '').join('');
   let content = '';
+  let extraSegments: string[] = [];
   try {
-    content = JSON.parse(rawText).content;
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed.segments) && parsed.segments.length > 0) {
+      content = parsed.segments[0];
+      extraSegments = parsed.segments.slice(1);
+    } else {
+      content = parsed.content;
+    }
   } catch {
     content = rawText;
   }
@@ -180,6 +191,7 @@ export async function POST(request: Request) {
       persona_id: body.personaIsSystem ? null : body.personaId || null,
       topic: body.topic || product?.productName || body.affiliateProductName || '',
       content,
+      thread_segments: extraSegments.length ? extraSegments : null,
       status: 'draft',
     })
     .select()
