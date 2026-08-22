@@ -72,6 +72,9 @@ function SmartEditor() {
   const [coupangResults, setCoupangResults] = useState<CoupangProduct[]>([]);
   const [coupangSearching, setCoupangSearching] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<CoupangProduct | null>(null);
+  // 쿠팡파트너스 매출 15만원 달성 전까지는 API(상품검색/딥링크) 접근이 제한된다.
+  // 그 전까지는 이 체크박스로 링크를 직접 입력하고, 열리면 체크 해제하고 API 검색을 쓴다.
+  const [coupangManualMode, setCoupangManualMode] = useState(true);
 
   const [affiliateProductName, setAffiliateProductName] = useState('');
   const [affiliateUrl, setAffiliateUrl] = useState('');
@@ -282,7 +285,9 @@ function SmartEditor() {
       : topTab === 'compliance'
         ? !!topic.trim() && !!complianceCategory
         : affiliateSubTab === 'coupang'
-          ? !!selectedProduct
+          ? coupangManualMode
+            ? !!affiliateUrl.trim()
+            : !!selectedProduct
           : affiliateSubTab === 'generic'
             ? !!affiliateUrl.trim()
             : false; // toss: 실 API 미연동
@@ -299,7 +304,11 @@ function SmartEditor() {
         resultStyle,
       };
       if (topTab === 'compliance') body.complianceCategory = complianceCategory;
-      if (topTab === 'affiliate' && affiliateSubTab === 'coupang' && selectedProduct) body.product = selectedProduct;
+      if (topTab === 'affiliate' && affiliateSubTab === 'coupang' && !coupangManualMode && selectedProduct) body.product = selectedProduct;
+      if (topTab === 'affiliate' && affiliateSubTab === 'coupang' && coupangManualMode) {
+        body.affiliateUrl = affiliateUrl;
+        body.affiliateProductName = affiliateProductName;
+      }
       if (topTab === 'affiliate' && affiliateSubTab === 'generic') {
         body.affiliateUrl = affiliateUrl;
         body.affiliateProductName = affiliateProductName;
@@ -532,41 +541,75 @@ function SmartEditor() {
 
           {topTab === 'affiliate' && affiliateSubTab === 'coupang' && (
             <div className="mb-3">
-              <div className="flex gap-2 mb-3">
+              <label className="flex items-center gap-2 text-xs font-bold text-neutral-500 mb-3">
                 <input
-                  value={coupangKeyword}
-                  onChange={(e) => setCoupangKeyword(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCoupangSearch()}
-                  placeholder="상품 키워드 (예: 무선 청소기)"
-                  className="flex-1 border border-border px-3 py-2 text-sm"
+                  type="checkbox"
+                  checked={coupangManualMode}
+                  onChange={(e) => setCoupangManualMode(e.target.checked)}
                 />
-                <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-accent text-white text-xs font-black px-4">
-                  {coupangSearching ? '검색 중...' : '검색'}
-                </button>
-              </div>
-              {selectedProduct && (
-                <div className="flex items-center gap-2 bg-neutral-50 border border-border p-2 mb-3 text-xs">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={selectedProduct.productImage} alt="" className="w-10 h-10 object-cover" />
-                  <span className="flex-1 font-bold">{selectedProduct.productName}</span>
-                  <span>{selectedProduct.productPrice.toLocaleString()}원</span>
-                  <button onClick={() => setSelectedProduct(null)} className="text-red-500 font-bold">선택 해제</button>
+                링크 직접 입력 (쿠팡파트너스 API 미승인 상태 — 매출 15만원 달성 전까지 체크 유지, 열리면 해제)
+              </label>
+
+              {coupangManualMode ? (
+                <div className="space-y-3 mb-3">
+                  <div>
+                    <label className="text-xs font-bold text-neutral-500 mb-1 block">제품명</label>
+                    <input
+                      value={affiliateProductName}
+                      onChange={(e) => setAffiliateProductName(e.target.value)}
+                      placeholder="예: 샤오미 미밴드 8"
+                      className="w-full border border-border px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-neutral-500 mb-1 block">쿠팡파트너스 링크</label>
+                    <input
+                      value={affiliateUrl}
+                      onChange={(e) => setAffiliateUrl(e.target.value)}
+                      placeholder="https://link.coupang.com/a/..."
+                      className="w-full border border-border px-3 py-2.5 text-sm"
+                    />
+                  </div>
                 </div>
-              )}
-              {coupangResults.length > 0 && (
-                <div className="grid grid-cols-3 md:grid-cols-4 gap-2 mb-3">
-                  {coupangResults.map((p) => (
-                    <button
-                      key={p.productId}
-                      onClick={() => setSelectedProduct(p)}
-                      className={`border p-2 text-left text-[11px] ${selectedProduct?.productId === p.productId ? 'border-black' : 'border-border'}`}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={p.productImage} alt="" className="w-full aspect-square object-cover mb-1" />
-                      <div className="line-clamp-2 font-bold">{p.productName}</div>
+              ) : (
+                <>
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      value={coupangKeyword}
+                      onChange={(e) => setCoupangKeyword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCoupangSearch()}
+                      placeholder="상품 키워드 (예: 무선 청소기)"
+                      className="flex-1 border border-border px-3 py-2 text-sm"
+                    />
+                    <button onClick={handleCoupangSearch} disabled={coupangSearching} className="bg-accent text-white text-xs font-black px-4">
+                      {coupangSearching ? '검색 중...' : '검색'}
                     </button>
-                  ))}
-                </div>
+                  </div>
+                  {selectedProduct && (
+                    <div className="flex items-center gap-2 bg-neutral-50 border border-border p-2 mb-3 text-xs">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={selectedProduct.productImage} alt="" className="w-10 h-10 object-cover" />
+                      <span className="flex-1 font-bold">{selectedProduct.productName}</span>
+                      <span>{selectedProduct.productPrice.toLocaleString()}원</span>
+                      <button onClick={() => setSelectedProduct(null)} className="text-red-500 font-bold">선택 해제</button>
+                    </div>
+                  )}
+                  {coupangResults.length > 0 && (
+                    <div className="grid grid-cols-3 md:grid-cols-4 gap-2 mb-3">
+                      {coupangResults.map((p) => (
+                        <button
+                          key={p.productId}
+                          onClick={() => setSelectedProduct(p)}
+                          className={`border p-2 text-left text-[11px] ${selectedProduct?.productId === p.productId ? 'border-black' : 'border-border'}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={p.productImage} alt="" className="w-full aspect-square object-cover mb-1" />
+                          <div className="line-clamp-2 font-bold">{p.productName}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
               <textarea
                 value={topic}

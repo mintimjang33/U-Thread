@@ -14,6 +14,7 @@ import { createMcpHandler } from 'mcp-handler';
 import { z } from 'zod';
 import { getSupabaseServerClient } from '../../../lib/supabase';
 import { decryptVaultValue } from '../../../lib/vaultCrypto';
+import { publishThreadPostNow } from '../../../lib/publishThreadPost';
 import { coupangSearchProducts, coupangDeeplink } from '../../../lib/coupangApi';
 import { naverKeywordTool, rankByVolume } from '../../../lib/naverAdApi';
 
@@ -181,10 +182,17 @@ const baseHandler = createMcpHandler(
           userId: z.string().optional().describe('생략시 MCP_OWNER_USER_ID 사용'),
           personaId: z.string().optional().describe('ut_personas 또는 ut_system_personas의 id'),
           personaIsSystem: z.boolean().optional(),
+          affiliateComment: z
+            .string()
+            .optional()
+            .describe(
+              '제휴 링크(쿠팡파트너스/토스 등)를 직접 붙여넣을 때 사용. API 연동 전이라 사람이 링크를 수동으로 전달하는 방식 — ' +
+                '본문에 넣지 않고 발행 후 첫 댓글로 자동 게시된다(publish_thread_post가 처리).'
+            ),
         },
         annotations: { destructiveHint: false, idempotentHint: false },
       },
-      async ({ topic, userId, personaId, personaIsSystem }) => {
+      async ({ topic, userId, personaId, personaIsSystem, affiliateComment }) => {
         try {
           const uid = resolveUserId(userId);
           const supabase = getSupabaseServerClient();
@@ -229,12 +237,22 @@ const baseHandler = createMcpHandler(
 
           const { data: post, error } = await supabase
             .from('ut_thread_posts')
-            .insert({ user_id: uid, persona_id: personaIsSystem ? null : personaId || null, topic, content, status: 'draft' })
+            .insert({
+              user_id: uid,
+              persona_id: personaIsSystem ? null : personaId || null,
+              topic,
+              content,
+              status: 'draft',
+              affiliate_comment: affiliateComment?.trim() || null,
+            })
             .select()
             .single();
           if (error) throw new Error(error.message);
 
-          return textResult(`✅ 초안 생성 완료 (id: ${post.id})\n\n${content}`);
+          return textResult(
+            `✅ 초안 생성 완료 (id: ${post.id})\n\n${content}` +
+              (post.affiliate_comment ? `\n\n[발행 시 첫 댓글로 자동 게시될 제휴 댓글]\n${post.affiliate_comment}` : '')
+          );
         } catch (err) {
           return errorResult(err);
         }
@@ -260,15 +278,101 @@ const baseHandler = createMcpHandler(
           const { data: account } = await supabase.from('ut_threads_accounts').select('*').eq('id', threadsAccountId).maybeSingle();
           if (!account) throw new Error('연동된 Threads 계정을 찾을 수 없습니다.');
 
+          // /write, /multi-write, 예약발행 크론과 동일한 공용 함수를 쓴다 —
+          // 이전엔 여기서만 따로 발행 로직을 복제해뒀다가 타래 다단·제휴댓글이 누락되는 버그가 있었다.
+          const result = await publishThreadPostNow(post, account);
+
+          await supabase.from('ut_thread_posts').update({ status: 'posted', threads_account_id: threadsAccountId, threads_post_id: result.threadsPostId }).eq('id', postId);
+          return textResult(
+            `✅ 발행 완료: threads_post_id=${result.threadsPostId}` +
+              (post.affiliate_comment ? '\n↳ 제휴 댓글도 첫 댓글로 함께 발행됨' : '')
+          );
+        } catch (err) {
+          return errorResult(err);
+        }
+      }
+    );
+
+    server.registerTool(
+      'get_post_insights',
+      {
+        title: '발행된 글의 실제 조회수/반응 확인',
+        description: '특정 Threads 게시물의 실제 조회수·좋아요·답글·리포스트·인용 수를 Threads Graph API로 직접 조회한다. 추측하지 말고 이걸로 확인할 것.',
+        inputSchema: {
+          postId: z.string().describe('ut_thread_posts의 id (threads_post_id를 자동으로 찾아 조회한다)'),
+        },
+      },
+      async ({ postId }) => {
+        try {
+          const supabase = getSupabaseServerClient();
+          const { data: post } = await supabase.from('ut_thread_posts').select('threads_post_id, threads_account_id').eq('id', postId).maybeSingle();
+          if (!post?.threads_post_id) throw new Error('아직 발행되지 않았거나 threads_post_id가 없는 글입니다.');
+          const { data: account } = await supabase.from('ut_threads_accounts').select('encrypted_access_token').eq('id', post.threads_account_id).maybeSingle();
+          if (!account) throw new Error('연동된 Threads 계정을 찾을 수 없습니다.');
+          const accessToken = decryptVaultValue(account.encrypted_access_token);
+          const metrics = 'views,likes,replies,reposts,quotes';
+          const res = await fetch(`https://graph.threads.net/v1.0/${post.threads_post_id}/insights?metric=${metrics}&access_token=${encodeURIComponent(accessToken)}`);
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error?.message || JSON.stringify(json));
+          return textResult(JSON.stringify(json.data, null, 2));
+        } catch (err) {
+          return errorResult(err);
+        }
+      }
+    );
+
+    server.registerTool(
+      'list_mentions',
+      {
+        title: '내 계정에 달린 언급(멘션) 목록 조회',
+        description:
+          '연동된 Threads 계정에 언급(mention)된 게시물 목록을 실제 Threads API로 가져온다. ' +
+          '⚠️ Meta 앱 심사(threads_manage_mentions) 승인 전에는 테스터 계정이 언급한 것만 반환됨(공식 문서 명시) — ' +
+          '"멘션이 없다"고 바로 단정하지 말고 이 제약을 먼저 확인할 것.',
+        inputSchema: { threadsAccountId: z.string().describe('ut_threads_accounts의 id') },
+      },
+      async ({ threadsAccountId }) => {
+        try {
+          const supabase = getSupabaseServerClient();
+          const { data: account } = await supabase.from('ut_threads_accounts').select('*').eq('id', threadsAccountId).maybeSingle();
+          if (!account) throw new Error('연동된 Threads 계정을 찾을 수 없습니다.');
+          const accessToken = decryptVaultValue(account.encrypted_access_token);
+          const fields = 'id,text,username,permalink,timestamp';
+          const res = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/mentions?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`);
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error?.message || JSON.stringify(json));
+          return textResult(JSON.stringify(json.data || [], null, 2));
+        } catch (err) {
+          return errorResult(err);
+        }
+      }
+    );
+
+    server.registerTool(
+      'reply_to_mention',
+      {
+        title: '언급(멘션)에 답글 달기',
+        description: '언급된 게시물에 실제로 답글을 발행한다. 반드시 사람에게 답글 내용을 보여주고 승인받은 뒤 호출할 것.',
+        inputSchema: {
+          threadsAccountId: z.string().describe('ut_threads_accounts의 id'),
+          mentionId: z.string().describe('답글을 달 게시물의 threads media id (list_mentions로 확인)'),
+          text: z.string().describe('답글 내용'),
+        },
+        annotations: { destructiveHint: false, idempotentHint: false },
+      },
+      async ({ threadsAccountId, mentionId, text }) => {
+        try {
+          const supabase = getSupabaseServerClient();
+          const { data: account } = await supabase.from('ut_threads_accounts').select('*').eq('id', threadsAccountId).maybeSingle();
+          if (!account) throw new Error('연동된 Threads 계정을 찾을 수 없습니다.');
           const accessToken = decryptVaultValue(account.encrypted_access_token);
           const createRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ media_type: 'TEXT', text: post.content, access_token: accessToken }),
+            body: JSON.stringify({ media_type: 'TEXT', text, reply_to_id: mentionId, access_token: accessToken }),
           });
           const createJson = await createRes.json();
           if (!createRes.ok || !createJson.id) throw new Error(createJson.error?.message || JSON.stringify(createJson));
-
           const publishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -276,9 +380,7 @@ const baseHandler = createMcpHandler(
           });
           const publishJson = await publishRes.json();
           if (!publishRes.ok || !publishJson.id) throw new Error(publishJson.error?.message || JSON.stringify(publishJson));
-
-          await supabase.from('ut_thread_posts').update({ status: 'posted', threads_account_id: threadsAccountId }).eq('id', postId);
-          return textResult(`✅ 발행 완료: threads_post_id=${publishJson.id}`);
+          return textResult(`✅ 답글 발행 완료: reply_id=${publishJson.id}`);
         } catch (err) {
           return errorResult(err);
         }
@@ -417,7 +519,8 @@ const baseHandler = createMcpHandler(
       '유쓰레드(U-Thread) MCP 서버 — Threads 콘텐츠 자동화 SaaS의 데이터/기능을 직접 다룬다. ' +
       'Supabase 범용 CRUD(list_tables/get_rows/upsert_row/delete_row/run_sql — run_sql은 SELECT만 허용), ' +
       '쓰레드 초안 생성/발행(generate_thread_draft/publish_thread_post — 발행 전 사람 승인 필수), ' +
-      '쿠팡파트너스 상품검색/딥링크(search_coupang_products/get_coupang_deeplink), ' +
+      '발행 후 실제 성과 확인(get_post_insights), 멘션 조회/답글(list_mentions/reply_to_mention — 답글 전 사람 승인 필수), ' +
+      '쿠팡파트너스 상품검색/딥링크(search_coupang_products/get_coupang_deeplink — API 미승인 상태면 generate_thread_draft의 affiliateComment로 링크를 직접 넘길 것), ' +
       '네이버 트렌드 키워드(get_trend_keywords), GitHub 저장소 조회(list_github_files/get_github_file)를 제공한다. ' +
       'userId를 요구하는 도구는 생략시 MCP_OWNER_USER_ID(운영자 본인 계정)를 기본으로 사용한다.',
     verboseLogs: true,
