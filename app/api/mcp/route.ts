@@ -55,12 +55,21 @@ const BASE_SYSTEM_PROMPT = `너는 쓰레드(Threads) 바이럴 글쓰기 전문
 
 금지: 순수 정보나열형/백과사전 어투("~에 좋습니다/주의하세요" 식), 광고 티 나는 문구, 지어낸 경험담이나 검증 안 된 숫자.
 
+실제로 반응 좋은 쓰레드 글을 비교분석해서 나온 원리(왜 통하는지):
+- 첫 줄은 정보가 아니라 감정이다 — 확신("이건 절대 못참지"), 손실회피("없으면 손해보는"), 공포("헐 미친"), 애정/소속감("~ 절 받으세요") 중 하나로 시작해야 스크롤을 멈춘다. 상품명·정보는 그 다음이다.
+- ⭐ 가장 강력한 훅은 "숫자로 증명된 성과 서사"다(위기→발견→극복→구체적 숫자 성과, 예: "망해가던 가게에서 5만개 팔아서 결혼한다"). 실측 비교 결과 이게 단순 감정소구(힘들다 등)보다 반응이 10배 이상 차이났다 — 실제 성과·숫자가 있으면 이 유형을 최우선으로 쓴다.
+- 실수·위기를 투명하게 인정하는 글도 댓글 참여를 폭발시킨다(사람들이 위로·응원 댓글을 달게 됨) — 완벽한 척보다 솔직한 인정이 신뢰를 쌓는다.
+- 문제→(제3자의)발견→해결의 완결된 미니 서사가 순수 정보나열보다 이탈률이 낮다.
+- 문장은 짧게 끊고 이모지로 리듬을 준다. 막연한 얘기 대신 "빨래에 자꾸 쉰내가 나서"처럼 구체적 장면을 준다.
+- 링크는 최대한 숨기거나 최소 노출한다(본문에 대놓고 걸면 광고로 인지돼 도달이 죽는다는 게 실전에서 검증됨) — 아래 few-shot 예시가 있으면 그 링크 처리 방식도 함께 참고할 것.
+- 쓰레드 알고리즘은 좋아요보다 "첫 줄에서 스크롤이 멈췄는가"와 "팔로워 아닌 사람도 반응했는가"를 우선 본다 — 특정 팬층만 아는 얘기가 아니라 낯선 사람도 공감할 장면으로 써라.
+
 허용 포맷 3종 중 하나로 작성:
 1. 총정리/치트시트 — 압축된 정보를 리스트로 정리
 2. 위트있는 한 줄 — 유행어/공감형 문구 + 검증 가능한 사실 하나
 3. 개인 서사 — 실제로 있을 법한 자연스러운 경험 기반(과장된 숫자 금지)
 
-형식: 첫 줄에 숫자·의외성·질문 중 하나로 훅을 만들 것. 해시태그는 2~3개까지만.
+형식: 첫 줄은 위 감정 원리 중 하나로 훅을 만들 것(정보/숫자로 시작 금지). 해시태그는 2~3개까지만.
 결과는 JSON으로만 출력: {"content": "..."}`;
 
 const baseHandler = createMcpHandler(
@@ -218,11 +227,27 @@ const baseHandler = createMcpHandler(
             if (p) personaContext = `\n\n말투: ${p.tone_prompt || '기본'}\n타겟: ${p.target_prompt || '일반 독자'}`;
           }
 
+          // 실제로 반응이 검증된 글(ut_benchmark_items)을 few-shot 예시로 넣는다 —
+          // 백지에서 지어내지 않고 이미 터진 글의 훅·구조·톤을 흉내내게 만들기 위함.
+          const { data: benchmarks } = await supabase
+            .from('ut_benchmark_items')
+            .select('content')
+            .eq('user_id', uid)
+            .order('created_at', { ascending: false })
+            .limit(20);
+          let benchmarkContext = '';
+          if (benchmarks && benchmarks.length > 0) {
+            const sample = [...benchmarks].sort(() => Math.random() - 0.5).slice(0, 4);
+            benchmarkContext =
+              '\n\n아래는 실제로 반응이 좋았던 검증된 스레드 글 예시다. 그대로 베끼지 말고, 첫 줄 훅 방식·문장 길이·이모지 사용·타래 나누는 방식 같은 "패턴"만 참고해서 이번 주제에 맞게 새로 써라:\n' +
+              sample.map((b, i) => `--- 예시 ${i + 1} ---\n${b.content}`).join('\n\n');
+          }
+
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              systemInstruction: { parts: [{ text: BASE_SYSTEM_PROMPT + personaContext }] },
+              systemInstruction: { parts: [{ text: BASE_SYSTEM_PROMPT + personaContext + benchmarkContext }] },
               contents: [{ role: 'user', parts: [{ text: `주제: ${topic}` }] }],
               generationConfig: { responseMimeType: 'application/json' },
             }),
