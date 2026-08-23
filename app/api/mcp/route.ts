@@ -17,6 +17,8 @@ import { decryptVaultValue } from '../../../lib/vaultCrypto';
 import { publishThreadPostNow } from '../../../lib/publishThreadPost';
 import { coupangSearchProducts, coupangDeeplink } from '../../../lib/coupangApi';
 import { naverKeywordTool, rankByVolume } from '../../../lib/naverAdApi';
+import { getGoogleTrendsKR } from '../../../lib/googleTrends';
+import { searchNaverNews } from '../../../lib/naverNews';
 
 const GITHUB_REPO = 'mintimjang33/U-Thread';
 
@@ -445,10 +447,52 @@ const baseHandler = createMcpHandler(
     );
 
     server.registerTool(
+      'get_google_trends_kr',
+      {
+        title: '구글 트렌드 KR 실시간 급상승 검색어',
+        description:
+          '시드 키워드 없이 지금 한국에서 실시간으로 뜨는 검색어 목록을 가져온다(구글 트렌드 RSS). ' +
+          '소재를 정할 때 가장 먼저 호출할 것 — get_trend_keywords는 시드 키워드가 있어야만 작동하는 연관어 확장 툴이라 ' +
+          '"지금 뭐가 뜨는지"는 이 툴로만 알 수 있다.',
+        inputSchema: {},
+      },
+      async () => {
+        try {
+          const items = await getGoogleTrendsKR();
+          return textResult(JSON.stringify(items, null, 2));
+        } catch (err) {
+          return errorResult(err);
+        }
+      }
+    );
+
+    server.registerTool(
+      'search_naver_news',
+      {
+        title: '네이버 뉴스 검색',
+        description: '쿼리로 최신 네이버 뉴스를 검색한다. 특정 이슈/키워드의 최신 맥락을 확인하거나 근거 기사를 찾을 때 사용.',
+        inputSchema: { query: z.string().describe('검색어 (비우면 "오늘 이슈")'), display: z.number().int().min(1).max(30).optional() },
+      },
+      async ({ query, display = 15 }) => {
+        try {
+          const clientId = process.env.NAVER_CLIENT_ID;
+          const clientSecret = process.env.NAVER_CLIENT_SECRET;
+          if (!clientId || !clientSecret) throw new Error('NAVER_CLIENT_ID/NAVER_CLIENT_SECRET 환경변수가 설정되어 있지 않습니다.');
+          const items = await searchNaverNews(clientId, clientSecret, query || '오늘 이슈', display);
+          return textResult(JSON.stringify(items, null, 2));
+        } catch (err) {
+          return errorResult(err);
+        }
+      }
+    );
+
+    server.registerTool(
       'get_trend_keywords',
       {
-        title: '네이버 트렌드 키워드 조회',
-        description: '시드 키워드로 네이버 검색광고 연관 키워드+월간 검색량을 조회해 정렬한다.',
+        title: '네이버 연관 키워드+검색량 조회',
+        description:
+          '시드 키워드가 반드시 필요한 연관어 확장 툴(진짜 실시간 트렌드가 아님). ' +
+          'get_google_trends_kr로 소재를 먼저 정한 뒤, 그 소재가 네이버에서 얼마나 검색되는지 검증할 때 사용.',
         inputSchema: { seedKeyword: z.string(), limit: z.number().int().min(1).max(50).optional() },
       },
       async ({ seedKeyword, limit = 20 }) => {
