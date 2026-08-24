@@ -48,6 +48,9 @@ async function handleCollectAction(body) {
 }
 
 async function handleRecheckAction() {
+  logs.length = 0; // 재연결하면 로그를 비우고 새로 시작 — 예전 로그와 섞여서 헷갈리지 않게.
+  pushLog('[대시보드] 재연결 시작...');
+
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
   const email = await getClaudeAccountEmail();
