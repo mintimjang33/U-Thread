@@ -105,6 +105,7 @@ const PAGE = () => `<!doctype html>
     </div>
     <div class="actions">
       <button class="secondary" id="recheckBtn">🔄 재연결 확인</button>
+      <button class="secondary" id="shutdownBtn" style="color:#dc2626;border-color:#fca5a5">🛑 워커 종료</button>
     </div>
     <div id="msg"></div>
   </div>
@@ -163,6 +164,17 @@ const PAGE = () => `<!doctype html>
       }
     });
 
+    document.getElementById('shutdownBtn').addEventListener('click', async () => {
+      if (!confirm('워커를 종료할까요? 콘솔 창도 같이 닫혀요.')) return;
+      setMsg('종료 중...');
+      try {
+        await fetch('/api/action/shutdown', { method: 'POST' });
+        setMsg('✅ 워커가 종료됐어요. 이 페이지는 이제 안 써도 돼요.');
+      } catch {
+        setMsg('✅ 워커가 종료됐어요.');
+      }
+    });
+
     document.getElementById('recheckBtn').addEventListener('click', async () => {
       const btn = document.getElementById('recheckBtn');
       btn.disabled = true;
@@ -213,6 +225,14 @@ function startDashboard() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+      return;
+    }
+    if (req.url === '/api/action/shutdown' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      console.log('[대시보드] 종료 버튼으로 워커를 끕니다.');
+      // 응답을 먼저 보내고 나서 살짝 뒤에 종료해야 브라우저가 "종료됨" 메시지를 받을 수 있다.
+      setTimeout(() => process.exit(0), 300);
       return;
     }
     if (req.url === '/api/action/recheck' && req.method === 'POST') {
