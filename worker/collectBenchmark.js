@@ -56,7 +56,16 @@ async function collectBenchmark(input) {
         throw new Error('로그인 대기 시간(5분) 초과. 다시 시도해주세요.');
       }
       console.log('✅ 로그인 확인됨 — 수집을 시작합니다.');
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      // 로그인 직후엔 쓰레드 자체의 리다이렉트가 아직 끝나지 않은 경우가 있어(레이스 컨디션),
+      // 잠깐 안정화를 기다린 뒤 재이동한다. 그래도 뜨는 net::ERR_ABORTED는 그 리다이렉트와
+      // 겹친 것뿐이라 한 번 더 시도하면 보통 해결된다.
+      await new Promise((r) => setTimeout(r, 3000));
+      try {
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
 
