@@ -25,6 +25,20 @@ function findChrome() {
   return CHROME_PATHS.find((p) => fs.existsSync(p));
 }
 
+// 쓰레드는 SPA라 백그라운드에서 자체적으로 클라이언트 사이드 네비게이션을 계속 일으킨다.
+// 그 타이밍에 evaluate가 걸리면 "Execution context was destroyed"가 뜨는데, 치명적 에러가
+// 아니라 그냥 그 순간을 건너뛰고 잠깐 뒤에 다시 시도하면 되는 일이라 재시도로 흡수한다.
+async function safeEvaluate(page, fn, arg, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return arg !== undefined ? await page.evaluate(fn, arg) : await page.evaluate(fn);
+    } catch (err) {
+      if (i === retries || !String(err.message).includes('Execution context was destroyed')) throw err;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+}
+
 async function collectBenchmark(input) {
   const executablePath = findChrome();
   if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
@@ -43,13 +57,13 @@ async function collectBenchmark(input) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
 
-    let loggedIn = await page.evaluate(() => !document.body.innerText.includes('로그인'));
+    let loggedIn = await safeEvaluate(page, () => !document.body.innerText.includes('로그인'));
     if (!loggedIn) {
       console.log('⚠️ threads.net에 로그인이 안 되어 있습니다. 방금 뜬 크롬 창에서 직접 로그인해주세요 (최대 5분 대기, 한 번만 하면 이후엔 계속 유지됩니다).');
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 3000));
-        loggedIn = await page.evaluate(() => !document.body.innerText.includes('로그인')).catch(() => false);
+        loggedIn = await safeEvaluate(page, () => !document.body.innerText.includes('로그인')).catch(() => false);
         if (loggedIn) break;
       }
       if (!loggedIn) {
@@ -59,30 +73,32 @@ async function collectBenchmark(input) {
       // 로그인 직후엔 쓰레드 자체의 리다이렉트가 아직 끝나지 않은 경우가 있어(레이스 컨디션),
       // 잠깐 안정화를 기다린 뒤 재이동한다. 그래도 뜨는 net::ERR_ABORTED는 그 리다이렉트와
       // 겹친 것뿐이라 한 번 더 시도하면 보통 해결된다.
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 5000));
       try {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
       } catch {
         await new Promise((r) => setTimeout(r, 2000));
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, 3000));
     }
 
     const items = [];
     let likesUsed = 0;
 
     for (let scroll = 0; scroll < (input.maxScrolls || 5); scroll++) {
-      const candidates = await page.evaluate(
-        (sel) => {
-          const posts = Array.from(document.querySelectorAll(sel.postContainer));
-          return posts.map((el) => ({
-            text: el.innerText || '',
-            hasMedia: !!el.querySelector('img, video'),
-          }));
-        },
-        SELECTORS
-      );
+      const candidates =
+        (await safeEvaluate(
+          page,
+          (sel) => {
+            const posts = Array.from(document.querySelectorAll(sel.postContainer));
+            return posts.map((el) => ({
+              text: el.innerText || '',
+              hasMedia: !!el.querySelector('img, video'),
+            }));
+          },
+          SELECTORS
+        ).catch(() => [])) || [];
 
       for (const c of candidates) {
         if (c.hasMedia) continue; // 일단 텍스트 전용 글만 (원본 수집 1차 범위)
@@ -104,7 +120,7 @@ async function collectBenchmark(input) {
         }
       }
 
-      await page.evaluate(() => window.scrollBy(0, window.innerHeight * 1.5));
+      await safeEvaluate(page, () => window.scrollBy(0, window.innerHeight * 1.5)).catch(() => {});
       await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1500));
     }
 
