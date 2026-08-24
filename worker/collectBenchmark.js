@@ -164,7 +164,10 @@ async function collectBenchmark(input) {
     const page = await browser.newPage();
     const keyword = input.keyword || '';
     const url = keyword ? `https://www.threads.net/search?q=${encodeURIComponent(keyword)}&serp_type=default` : 'https://www.threads.net/';
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // 쓰레드는 백그라운드 폴링/웹소켓 통신이 끊이지 않는 SPA라 networkidle2가 절대 안 와서
+    // 화면은 다 로드됐는데도 30초 타임아웃으로 실패했다(실측 확인). domcontentloaded로 바꾸고
+    // 아래 대기 시간으로 렌더링 안정화를 기다린다.
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
 
     let loggedIn = await safeEvaluate(page, () => !document.body.innerText.includes('로그인'));
@@ -185,10 +188,10 @@ async function collectBenchmark(input) {
       // 겹친 것뿐이라 한 번 더 시도하면 보통 해결된다.
       await new Promise((r) => setTimeout(r, 5000));
       try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } catch {
         await new Promise((r) => setTimeout(r, 2000));
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       }
       await new Promise((r) => setTimeout(r, 3000));
     }
