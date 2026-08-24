@@ -1,0 +1,59 @@
+const { loadConfig } = require('./config');
+const { generateViaClaude } = require('./generate');
+const { collectBenchmark } = require('./collectBenchmark');
+
+const POLL_INTERVAL_MS = 8000;
+
+async function apiFetch(config, path, options = {}) {
+  const res = await fetch(config.apiBase + path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}`, ...(options.headers || {}) },
+  });
+  if (!res.ok) throw new Error(`API ${path} -> ${res.status}`);
+  return res.json();
+}
+
+async function claimAndRun(config, job) {
+  console.log(`[job ${job.id}] ${job.type} 시작`);
+  await apiFetch(config, `/api/worker/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'processing' }) });
+
+  try {
+    let output;
+    if (job.type === 'generate') {
+      const content = await generateViaClaude(job.input.prompt);
+      output = { content };
+    } else if (job.type === 'collect_benchmark') {
+      output = await collectBenchmark(job.input);
+    } else {
+      throw new Error(`알 수 없는 작업 타입: ${job.type}`);
+    }
+    await apiFetch(config, `/api/worker/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'done', output }) });
+    console.log(`[job ${job.id}] 완료`);
+  } catch (err) {
+    console.error(`[job ${job.id}] 실패:`, err.message);
+    await apiFetch(config, `/api/worker/jobs/${job.id}`, { method: 'PATCH', body: JSON.stringify({ status: 'failed', error: err.message }) });
+  }
+}
+
+async function pollLoop() {
+  const config = loadConfig();
+  if (!config) {
+    console.error('페어링 설정이 없습니다. 먼저 node pair.js 를 실행하세요.');
+    process.exit(1);
+  }
+
+  console.log(`유쓰레드 로컬 워커 시작 — ${config.apiBase}`);
+  while (true) {
+    try {
+      const { jobs } = await apiFetch(config, '/api/worker/jobs');
+      for (const job of jobs) {
+        await claimAndRun(config, job);
+      }
+    } catch (err) {
+      console.error('폴링 오류:', err.message);
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+}
+
+pollLoop();

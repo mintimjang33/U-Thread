@@ -82,18 +82,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ post });
   }
 
-  const { data: keyRow } = await supabase
-    .from('ut_api_keys_vault')
-    .select('encrypted_values')
-    .eq('user_id', user.id)
-    .eq('provider', 'GEMINI')
-    .maybeSingle();
+  // 로컬 워커(클로드 구독) 사용 조건: 설정이 'worker'이고, 워커 전용 처리로 못 다루는 이미지/구글검색 그라운딩이 없을 때만.
+  const { data: editorDefaults } = await supabase.from('ut_editor_defaults').select('ai_source').eq('user_id', user.id).maybeSingle();
+  const useWorker = editorDefaults?.ai_source === 'worker' && !body.mediaBase64 && body.googleSearch !== true;
 
-  const encryptedKey = keyRow?.encrypted_values?.apiKey;
-  if (!encryptedKey) {
-    return NextResponse.json({ error: 'Gemini API 키가 등록되어 있지 않습니다. /onboarding에서 먼저 등록해주세요.' }, { status: 400 });
+  let apiKey = '';
+  if (!useWorker) {
+    const { data: keyRow } = await supabase
+      .from('ut_api_keys_vault')
+      .select('encrypted_values')
+      .eq('user_id', user.id)
+      .eq('provider', 'GEMINI')
+      .maybeSingle();
+
+    const encryptedKey = keyRow?.encrypted_values?.apiKey;
+    if (!encryptedKey) {
+      return NextResponse.json({ error: 'Gemini API 키가 등록되어 있지 않습니다. /onboarding에서 먼저 등록해주세요.' }, { status: 400 });
+    }
+    apiKey = decryptVaultValue(encryptedKey);
   }
-  const apiKey = decryptVaultValue(encryptedKey);
 
   let personaContext = '';
   if (body.personaIsSystem && body.personaId) {
@@ -173,25 +180,56 @@ export async function POST(request: Request) {
     userParts.push({ inlineData: { mimeType: body.mediaMimeType, data: body.mediaBase64 } });
   }
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt + personaContext }] },
-      contents: [{ role: 'user', parts: userParts }],
-      // google_search 그라운딩은 responseMimeType:json과 함께 못 써서, 켜져 있으면 구조화 출력 강제를 빼고
-      // 시스템 프롬프트의 "JSON으로만 출력" 지침 + 아래 폴백 파싱에 맡긴다.
-      ...(useGoogleSearch ? { tools: [{ google_search: {} }] } : { generationConfig: { responseMimeType: 'application/json' } }),
-    }),
-  });
+  let rawText: string;
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    return NextResponse.json({ error: `Gemini 요청 실패 (${res.status}): ${errText.slice(0, 300)}` }, { status: 500 });
+  if (useWorker) {
+    const combinedPrompt =
+      `${systemPrompt}${personaContext}${benchmarkContext}\n\n---\n\n${userPrompt}\n\n(반드시 위 시스템 지침의 JSON 형식으로만 응답할 것. 다른 설명 텍스트 없이 JSON만 출력.)`;
+    const { data: job, error: jobError } = await supabase
+      .from('ut_worker_jobs')
+      .insert({ user_id: user.id, type: 'generate', input: { prompt: combinedPrompt } })
+      .select()
+      .single();
+    if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
+
+    const deadline = Date.now() + 55000;
+    let finished: { status: string; output: { content?: string } | null; error: string | null } | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const { data: polled } = await supabase.from('ut_worker_jobs').select('status, output, error').eq('id', job.id).single();
+      if (polled && (polled.status === 'done' || polled.status === 'failed')) {
+        finished = polled;
+        break;
+      }
+    }
+    if (!finished || finished.status !== 'done') {
+      return NextResponse.json(
+        { error: finished?.error || '로컬 워커가 응답하지 않았습니다. 워커가 켜져 있는지(node index.js) 확인해주세요.' },
+        { status: 500 }
+      );
+    }
+    rawText = finished.output?.content || '';
+  } else {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt + personaContext }] },
+        contents: [{ role: 'user', parts: userParts }],
+        // google_search 그라운딩은 responseMimeType:json과 함께 못 써서, 켜져 있으면 구조화 출력 강제를 빼고
+        // 시스템 프롬프트의 "JSON으로만 출력" 지침 + 아래 폴백 파싱에 맡긴다.
+        ...(useGoogleSearch ? { tools: [{ google_search: {} }] } : { generationConfig: { responseMimeType: 'application/json' } }),
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      return NextResponse.json({ error: `Gemini 요청 실패 (${res.status}): ${errText.slice(0, 300)}` }, { status: 500 });
+    }
+
+    const json = await res.json();
+    rawText = (json.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || '').join('');
   }
-
-  const json = await res.json();
-  const rawText = (json.candidates?.[0]?.content?.parts || []).map((p: { text?: string }) => p.text || '').join('');
   let content = '';
   let extraSegments: string[] = [];
   try {

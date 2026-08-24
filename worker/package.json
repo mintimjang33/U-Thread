@@ -1,0 +1,13 @@
+{
+  "name": "u-thread-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "pair": "node pair.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
