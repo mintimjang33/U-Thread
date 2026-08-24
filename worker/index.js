@@ -1,14 +1,14 @@
 const { loadConfig } = require('./config');
-const { generateViaClaude } = require('./generate');
+const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
 const { collectBenchmark } = require('./collectBenchmark');
 
 const POLL_INTERVAL_MS = 8000;
+let claudeEmail = null;
 
 async function apiFetch(config, path, options = {}) {
-  const res = await fetch(config.apiBase + path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}`, ...(options.headers || {}) },
-  });
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}`, ...(options.headers || {}) };
+  if (claudeEmail) headers['X-Claude-Account'] = claudeEmail;
+  const res = await fetch(config.apiBase + path, { ...options, headers });
   if (!res.ok) throw new Error(`API ${path} -> ${res.status}`);
   return res.json();
 }
@@ -42,7 +42,8 @@ async function pollLoop() {
     process.exit(1);
   }
 
-  console.log(`유쓰레드 로컬 워커 시작 — ${config.apiBase}`);
+  claudeEmail = await getClaudeAccountEmail();
+  console.log(`유쓰레드 로컬 워커 시작 — ${config.apiBase}${claudeEmail ? ` (클로드 계정: ${claudeEmail})` : ' (클로드 계정 확인 안 됨 — claude auth login 필요)'}`);
   while (true) {
     try {
       const { jobs } = await apiFetch(config, '/api/worker/jobs');

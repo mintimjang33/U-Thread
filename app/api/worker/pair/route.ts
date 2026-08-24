@@ -10,7 +10,7 @@ export async function GET() {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from('ut_worker_pairing')
-    .select('id, label, last_seen_at, created_at, expires_at')
+    .select('id, label, last_seen_at, created_at, expires_at, claude_email')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

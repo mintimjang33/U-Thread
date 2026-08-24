@@ -15,4 +15,17 @@ function generateViaClaude(prompt) {
   });
 }
 
-module.exports = { generateViaClaude };
+function getClaudeAccountEmail() {
+  return new Promise((resolve) => {
+    execFile('claude', ['auth', 'status'], { timeout: 15000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      try {
+        resolve(JSON.parse(stdout).email || null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+module.exports = { generateViaClaude, getClaudeAccountEmail };

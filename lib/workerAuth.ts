@@ -11,6 +11,9 @@ export async function getWorkerUserId(request: Request): Promise<string | null> 
   if (!data) return null;
   if (data.expires_at && new Date(data.expires_at).getTime() < Date.now()) return null; // 이용권 만료
 
-  await supabase.from('ut_worker_pairing').update({ last_seen_at: new Date().toISOString() }).eq('token', token);
+  const update: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+  const claudeEmail = request.headers.get('x-claude-account');
+  if (claudeEmail) update.claude_email = claudeEmail;
+  await supabase.from('ut_worker_pairing').update(update).eq('token', token);
   return data.user_id;
 }

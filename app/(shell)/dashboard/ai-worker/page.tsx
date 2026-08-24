@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type Pairing = { id: string; label: string | null; last_seen_at: string | null; created_at: string; expires_at: string | null };
+type Pairing = { id: string; label: string | null; last_seen_at: string | null; created_at: string; expires_at: string | null; claude_email: string | null };
 type Defaults = { ai_source: 'gemini' | 'worker' };
 
 function isOnline(lastSeenAt: string | null) {
@@ -167,6 +167,7 @@ export default function AiWorkerPage() {
                   <span className={`inline-block w-2 h-2 rounded-full mr-2 ${!expired && isOnline(p.last_seen_at) ? 'bg-green-500' : 'bg-neutral-300'}`} />
                   {p.label || '이용권'} — {expired ? '만료됨' : isOnline(p.last_seen_at) ? '온라인' : p.last_seen_at ? `마지막 접속: ${new Date(p.last_seen_at).toLocaleString('ko-KR')}` : '아직 연결 안 됨'}
                   <span className="text-neutral-400"> · {remainingLabel(p.expires_at)}</span>
+                  {p.claude_email && <span className="text-neutral-400"> · 클로드 계정: {p.claude_email}</span>}
                 </div>
                 <button onClick={() => revokePairing(p.id)} className="text-red-500 font-bold">
                   연결 해제
