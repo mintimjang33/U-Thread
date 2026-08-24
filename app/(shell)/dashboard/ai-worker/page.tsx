@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react';
 
 type Pairing = { id: string; label: string | null; last_seen_at: string | null; created_at: string; expires_at: string | null; claude_email: string | null };
 type Defaults = { ai_source: 'gemini' | 'worker' };
+type SavedKeyword = { id: string; keyword: string };
+
+const DEFAULT_KEYWORDS = ['뷰티템', '꿀템', '살림꿀팁', '육아꿀팁', '다이소 꿀템'];
 
 function isOnline(lastSeenAt: string | null) {
   if (!lastSeenAt) return false;
@@ -29,10 +32,27 @@ export default function AiWorkerPage() {
   const [collecting, setCollecting] = useState(false);
   const [collectResult, setCollectResult] = useState<string | null>(null);
   const [durationDays, setDurationDays] = useState('0');
+  const [savedKeywords, setSavedKeywords] = useState<SavedKeyword[]>([]);
 
   function load() {
     fetch('/api/editor-defaults').then((r) => r.json()).then((d) => setDefaults(d.defaults));
     fetch('/api/worker/pair').then((r) => r.json()).then((d) => setPairings(d.pairings || []));
+    fetch('/api/search-keywords').then((r) => r.json()).then((d) => setSavedKeywords(d.keywords || []));
+  }
+
+  async function saveKeyword(kw: string) {
+    if (!kw.trim()) return;
+    await fetch('/api/search-keywords', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyword: kw.trim() }),
+    });
+    load();
+  }
+
+  async function deleteKeyword(id: string) {
+    await fetch(`/api/search-keywords?id=${id}`, { method: 'DELETE' });
+    load();
   }
 
   useEffect(() => {
@@ -192,6 +212,23 @@ export default function AiWorkerPage() {
         <p className="text-[11px] text-neutral-400 mb-4">
           <span className="font-bold">어떻게 하는지</span>: 워커 전용 크롬을 CDP로 직접 조종해서 실제 로그인 세션으로 움직여요(API 아님, 진짜 브라우저 조작). 댓글은 한 글자씩 타이핑하지 않고 클립보드에 복사해서 Ctrl+V로 한 번에 붙여넣어요 — 타이핑 리듬으로 봇 탐지되는 걸 피하기 위함이에요. 최초 1회는 워커가 띄우는 크롬 창에서 쓰레드 로그인이 필요해요(창이 뜨면 최대 5분 대기하니 그 안에 로그인하면 됨) — 이후엔 계속 로그인 상태가 유지돼요.
         </p>
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {DEFAULT_KEYWORDS.filter((k) => !savedKeywords.some((s) => s.keyword === k)).map((k) => (
+            <button key={k} onClick={() => setKeyword(k)} className="text-[11px] bg-neutral-100 font-bold px-2.5 py-1 rounded-full hover:bg-neutral-200">
+              {k}
+            </button>
+          ))}
+          {savedKeywords.map((s) => (
+            <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-accent/10 text-accent font-bold px-2.5 py-1 rounded-full">
+              <button onClick={() => setKeyword(s.keyword)} className="hover:underline">
+                {s.keyword}
+              </button>
+              <button onClick={() => deleteKeyword(s.id)} className="text-neutral-400 hover:text-red-500">
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
         <div className="flex gap-2 mb-2">
           <input
             value={keyword}
@@ -199,6 +236,9 @@ export default function AiWorkerPage() {
             placeholder="예: 다이소 꿀템"
             className="flex-1 border border-border px-3 py-2.5 text-sm"
           />
+          <button onClick={() => saveKeyword(keyword)} disabled={!keyword.trim()} className="border border-border text-[11px] font-bold px-3 py-2.5 disabled:opacity-40">
+            + 저장
+          </button>
           <button
             onClick={startCollect}
             disabled={!anyOnline || collecting || !keyword.trim()}

@@ -21,10 +21,12 @@ export async function GET(request: Request) {
   return NextResponse.json({ jobs: data || [] });
 }
 
-// 웹앱이 새 작업을 큐에 넣는다 (사람 로그인 세션 기준).
+// 새 작업을 큐에 넣는다 — 웹앱(사람 로그인 세션) 또는 워커 자신(페어링 토큰, 로컬 대시보드에서 직접 실행할 때) 둘 다 허용.
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+  const workerUserId = await getWorkerUserId(request);
+  const user = workerUserId ? null : await getCurrentUser();
+  const userId = workerUserId || user?.id;
+  if (!userId) return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 });
 
   const body = await request.json().catch(() => null);
   if (!body?.type) return NextResponse.json({ error: 'type이 필요합니다.' }, { status: 400 });
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from('ut_worker_jobs')
-    .insert({ user_id: user.id, type: body.type, input: body.input || {} })
+    .insert({ user_id: userId, type: body.type, input: body.input || {} })
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

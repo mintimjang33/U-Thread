@@ -18,8 +18,16 @@ const SELECTORS = {
   likeButton: 'svg[aria-label="좋아요"]',
   replyButton: 'svg[aria-label="댓글"], svg[aria-label="답글"]',
   commentInput: 'div[contenteditable="true"]',
-  submitButton: 'div[role="button"]:has-text("게시"), button:has-text("게시")',
 };
+
+// puppeteer-core는 Playwright의 :has-text() 같은 텍스트 기반 셀렉터를 지원하지 않아서,
+// "게시"라는 텍스트가 든 버튼을 JS로 직접 찾는다.
+async function findSubmitButton(page) {
+  return page.evaluateHandle(() => {
+    const candidates = Array.from(document.querySelectorAll('div[role="button"], button'));
+    return candidates.find((el) => (el.textContent || '').trim() === '게시' || (el.textContent || '').trim() === 'Post') || null;
+  });
+}
 
 const MIN_LIKES = 200;
 const MIN_REPLIES = 50;
@@ -38,13 +46,14 @@ async function judgeAndDraftComment(postText) {
 
   try {
     const raw = await generateViaClaude(prompt);
+    console.log('[댓글] AI 원본 응답:', raw.slice(0, 200));
     const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
     const parsed = JSON.parse(cleaned);
     if (parsed?.ok && typeof parsed.comment === 'string' && parsed.comment.trim()) {
       return parsed.comment.trim();
     }
-  } catch {
-    // 판단 실패 시 안전하게 댓글을 달지 않는다.
+  } catch (err) {
+    console.log('[댓글] AI 판단/파싱 실패:', err.message);
   }
   return null;
 }
@@ -115,6 +124,7 @@ async function collectBenchmark(input) {
     const items = [];
     let likesUsed = 0;
     let commentsUsed = 0;
+    const commentsLog = []; // 어떤 글에 뭐라고 댓글 달았는지 기록(추적용)
 
     for (let scroll = 0; scroll < (input.maxScrolls || 5); scroll++) {
       const candidates =
@@ -182,18 +192,28 @@ async function collectBenchmark(input) {
       // 좋아요보다 눈에 띄는 행동이라 세션당 훨씬 적게(최대 3개) 제한한다.
       if (commentsUsed < MAX_COMMENTS_PER_SESSION) {
         const targetIdx = candidates.findIndex((c) => c.text.trim().length > 10);
-        if (targetIdx >= 0) {
+        if (targetIdx < 0) {
+          console.log('[댓글] 댓글 달 만한(텍스트 10자 이상) 글을 이번 스크롤에서 못 찾음');
+        } else {
           try {
+            console.log(`[댓글] 후보 글 판단 중: "${candidates[targetIdx].text.slice(0, 40)}..."`);
             const comment = await judgeAndDraftComment(candidates[targetIdx].text);
-            if (comment) {
+            if (!comment) {
+              console.log('[댓글] AI가 이 글은 댓글 달기 부적절하다고 판단(스팸/성인/정치/만남요구 등) 또는 응답 파싱 실패 — 건너뜀');
+            } else {
+              console.log(`[댓글] AI가 만든 댓글: "${comment}" — 게시 시도`);
               const postHandles = await page.$$(SELECTORS.postContainer);
               const postHandle = postHandles[targetIdx];
               const replyBtn = postHandle && (await postHandle.$(SELECTORS.replyButton));
-              if (replyBtn) {
+              if (!replyBtn) {
+                console.log('[댓글] 댓글 버튼을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.replyButton)');
+              } else {
                 await replyBtn.click();
                 await new Promise((r) => setTimeout(r, 1500));
                 const input = await page.$(SELECTORS.commentInput);
-                if (input) {
+                if (!input) {
+                  console.log('[댓글] 입력창을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.commentInput)');
+                } else {
                   // 한 글자씩 타이핑하면 봇 특유의 일정한 리듬이 감지된다(투더제이/남다른AI 둘 다 지적한 부분).
                   // 대신 클립보드에 복사해서 Ctrl+V로 한 번에 붙여넣어 사람이 메모장에서 쓰고 붙여넣는 것처럼 흉내낸다.
                   await input.click();
@@ -203,17 +223,17 @@ async function collectBenchmark(input) {
                   await page.keyboard.press('KeyV');
                   await page.keyboard.up('Control');
                   await new Promise((r) => setTimeout(r, 800));
-                  const submitBtn = await page.$(SELECTORS.submitButton);
-                  if (submitBtn) {
-                    await submitBtn.click();
-                    commentsUsed++;
-                    console.log(`[댓글] "${comment}" 게시 완료`);
-                    await new Promise((r) => setTimeout(r, 2000 + Math.random() * 2000));
+                  const submitBtn = await findSubmitButton(page);
+                  const isSubmitUsable = submitBtn && (await submitBtn.asElement());
+                  if (!isSubmitUsable) {
+                    console.log('[댓글] "게시" 버튼을 못 찾음 — 쓰레드 UI 문구/구조가 다를 수 있음');
                   } else {
-                    console.log('[댓글] 게시 버튼을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.submitButton)');
+                    await submitBtn.asElement().click();
+                    commentsUsed++;
+                    commentsLog.push({ postPreview: candidates[targetIdx].text.slice(0, 80), comment });
+                    console.log(`[댓글] ✅ "${comment}" 게시 완료`);
+                    await new Promise((r) => setTimeout(r, 2000 + Math.random() * 2000));
                   }
-                } else {
-                  console.log('[댓글] 입력창을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.commentInput)');
                 }
               }
             }
@@ -227,7 +247,7 @@ async function collectBenchmark(input) {
       await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1500));
     }
 
-    return { items, likesUsed, commentsUsed, note: '좋아요/댓글 수 필터는 아직 미적용 — DOM에서 수치 파싱 검증 필요' };
+    return { items, likesUsed, commentsUsed, commentsLog, note: '좋아요/댓글 수 필터는 아직 미적용 — DOM에서 수치 파싱 검증 필요' };
   } finally {
     await browser.close();
   }
