@@ -101,12 +101,13 @@ export default function AiWorkerPage() {
   }
 
   const anyOnline = pairings.some((p) => isOnline(p.last_seen_at) && !isExpired(p.expires_at));
+  const everPaired = pairings.some((p) => !isExpired(p.expires_at));
 
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
         <span className="w-2.5 h-2.5 bg-accent inline-block" />
-        <h1 className="text-xl font-black">로컬 워커 (클로드 구독 연결)</h1>
+        <h1 className="text-xl font-black">My PC 반자동 (클로드 구독 연결)</h1>
       </div>
 
       <div className="border border-border p-6 mb-6">
@@ -124,11 +125,13 @@ export default function AiWorkerPage() {
           </button>
           <button
             onClick={() => setAiSource('worker')}
-            disabled={!anyOnline}
+            disabled={!everPaired}
             className={`flex-1 border p-4 text-left disabled:opacity-40 ${defaults?.ai_source === 'worker' ? 'border-black bg-neutral-50' : 'border-border'}`}
           >
-            <div className="font-black text-sm mb-1">로컬 워커 (클로드 구독)</div>
-            <div className="text-[11px] text-neutral-400">{anyOnline ? '추가 과금 없음' : '워커 연결 후 선택 가능'}</div>
+            <div className="font-black text-sm mb-1">My PC 반자동 (클로드 구독)</div>
+            <div className="text-[11px] text-neutral-400">
+              {!everPaired ? '이용권 발급 후 선택 가능' : anyOnline ? '추가 과금 없음 · 지금 온라인' : '추가 과금 없음 · 지금은 오프라인(3_start.bat 켜야 실제 생성됨)'}
+            </div>
           </button>
         </div>
       </div>

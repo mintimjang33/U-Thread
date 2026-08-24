@@ -8,6 +8,7 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "cross-spawn": "^7.0.6",
     "puppeteer-core": "^24.0.0"
   }
 }
