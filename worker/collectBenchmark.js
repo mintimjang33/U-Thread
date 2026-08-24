@@ -88,13 +88,27 @@ async function safeEvaluate(page, fn, arg, retries = 2) {
 let currentBrowser = null;
 
 async function closeBrowser() {
-  if (currentBrowser) {
+  if (!currentBrowser) return;
+  const browser = currentBrowser;
+  currentBrowser = null;
+  const proc = browser.process ? browser.process() : null;
+
+  try {
+    // 실제 구글 크롬은 "백그라운드 앱 계속 실행" 설정이나 작업 도중(evaluate 등)
+    // close()를 호출하면 응답이 없거나 창만 남는 경우가 있어, 무한정 기다리지 않는다.
+    await Promise.race([browser.close(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+  } catch (err) {
+    console.log('[워커] browser.close() 중 에러(강제 종료로 이어감):', err.message);
+  }
+
+  // close()로 안 꺼졌으면 프로세스를 직접 강제 종료한다.
+  if (proc && proc.exitCode === null && !proc.killed) {
+    console.log('[워커] 크롬 창이 안 닫혀서 강제 종료합니다.');
     try {
-      await currentBrowser.close();
-    } catch {
-      // 이미 닫혀있거나 응답이 없으면 무시하고 종료 진행
+      proc.kill();
+    } catch (err) {
+      console.log('[워커] 강제 종료 실패:', err.message);
     }
-    currentBrowser = null;
   }
 }
 
