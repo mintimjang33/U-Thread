@@ -20,6 +20,7 @@ type AccountPlan = {
   persona_is_system: boolean;
   notes: string | null;
   backstory: string | null;
+  suggested_handle: string | null;
   ratio_daily: number;
   ratio_shopping: number;
   viral_view_threshold: number;
@@ -43,7 +44,7 @@ function recommendPersona(category: string): { name: string; reason: string } | 
   return null;
 }
 
-type ConceptLeaf = { label: string; daily: string[]; intro: string[]; personaName: string; backstory: string };
+type ConceptLeaf = { label: string; daily: string[]; intro: string[]; personaName: string; backstory: string; targetAge?: string; handle?: string };
 type ConceptGroup = { label: string; icon: string; items: ConceptLeaf[] };
 
 // 컨셉을 넓은 분야 → 세부 컨셉 순으로 좁혀가면서 고를 수 있게. 각 컨셉은 "평소에 할 얘기(일상글 소재)"와
@@ -53,52 +54,52 @@ const CONCEPT_TREE: ConceptGroup[] = [
     label: '직업/경험담 (알바~경력직)',
     icon: '🧑‍🍳',
     items: [
-      { label: '과일가게 알바생', daily: ['오늘 들어온 과일 자랑', '진상 손님 썰', '사장님이 알려준 꿀팁'], intro: ['제철 과일', '과일 손질도구', '홈베이킹 재료'], personaName: '스토리텔링/웹소설형 후킹 에세이', backstory: '○○동 과일가게 알바 2년차 · 자전거로 통근 · 자취 중 · 취미는 홈베이킹' },
-      { label: '핫도그/분식집 알바생', daily: ['오늘 마감 썰', '단골 손님 에피소드', '메뉴 실수담'], intro: ['분식/간식류', '소스·조미료', '홈시어터 소품'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '역 앞 분식집 알바 1년차 · 도보로 통근 · 학업/직장 병행 · 취미는 드라마 정주행' },
-      { label: '편의점 알바생', daily: ['새벽 알바 썰', '희귀템 입고 소식', '진상 손님 대처기'], intro: ['편의점 꿀템', '생활잡화', '만화·굿즈'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '동네 편의점 야간 알바 · 버스로 통근 · 자취 중 · 취미는 만화·웹툰' },
-      { label: '카페 알바생', daily: ['오늘의 손님 관찰기', '신메뉴 시음 후기', '바리스타 성장기'], intro: ['커피용품', '홈카페 도구', '카메라 소품'], personaName: '스토리텔링/웹소설형 후킹 에세이', backstory: '동네 개인카페 알바 · 자전거로 통근 · 바리스타 자격증 준비 중 · 취미는 사진촬영' },
-      { label: '15년차 방과후 강사', daily: ['오늘 수업 에피소드', '학부모 상담 썰', '경력자만 아는 노하우'], intro: ['교구/학습용품', '수업 도구', '도서'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '지역 초등학교 방과후 강사 15년차 · 자차로 이동 · 자녀 있음 · 취미는 독서' },
+      { label: '과일가게 알바생', daily: ['오늘 들어온 과일 자랑', '진상 손님 썰', '사장님이 알려준 꿀팁'], intro: ['제철 과일', '과일 손질도구', '홈베이킹 재료'], personaName: '스토리텔링/웹소설형 후킹 에세이', backstory: '○○동 과일가게 알바 2년차 · 자전거로 통근 · 자취 중 · 취미는 홈베이킹', targetAge: '20-30대', handle: 'fruit_alba_diary' },
+      { label: '핫도그/분식집 알바생', daily: ['오늘 마감 썰', '단골 손님 에피소드', '메뉴 실수담'], intro: ['분식/간식류', '소스·조미료', '홈시어터 소품'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '역 앞 분식집 알바 1년차 · 도보로 통근 · 학업/직장 병행 · 취미는 드라마 정주행', targetAge: '10대 후반-20대', handle: 'hotdog_alba_log' },
+      { label: '편의점 알바생', daily: ['새벽 알바 썰', '희귀템 입고 소식', '진상 손님 대처기'], intro: ['편의점 꿀템', '생활잡화', '만화·굿즈'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '동네 편의점 야간 알바 · 버스로 통근 · 자취 중 · 취미는 만화·웹툰', targetAge: '20대', handle: 'cvs_night_alba' },
+      { label: '카페 알바생', daily: ['오늘의 손님 관찰기', '신메뉴 시음 후기', '바리스타 성장기'], intro: ['커피용품', '홈카페 도구', '카메라 소품'], personaName: '스토리텔링/웹소설형 후킹 에세이', backstory: '동네 개인카페 알바 · 자전거로 통근 · 바리스타 자격증 준비 중 · 취미는 사진촬영', targetAge: '20대', handle: 'cafe_alba_log' },
+      { label: '15년차 방과후 강사', daily: ['오늘 수업 에피소드', '학부모 상담 썰', '경력자만 아는 노하우'], intro: ['교구/학습용품', '수업 도구', '도서'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '지역 초등학교 방과후 강사 15년차 · 자차로 이동 · 자녀 있음 · 취미는 독서', targetAge: '40대', handle: 'afterschool_15y' },
     ],
   },
   {
     label: '살림/생활꿀템',
     icon: '🧹',
     items: [
-      { label: '자취생 살림템', daily: ['오늘 저녁 뭐 해먹었는지', '자취 초보 시행착오', '집안일 잔짜증'], intro: ['주방용품', '청소·수납템', '주방가전'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '1인 가구 자취 3년차 · 원룸 거주 · 도보/지하철 이동 · 취미는 넷플릭스+요리' },
-      { label: '신혼부부 살림', daily: ['부부 티키타카', '살림 분담 썰', '집들이 준비기'], intro: ['가전', '인테리어 소품', '캠핑용품'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '결혼 1년차 신혼부부 · 아파트 전세 거주 · 맞벌이 · 취미는 주말 캠핑' },
-      { label: '미니멀 라이프', daily: ['비움 기록', '정리 전후 비교'], intro: ['수납/정리 도구', '워킹화'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '1인 가구 · 미니멀 라이프 2년차 · 자전거 이동 · 취미는 산책' },
+      { label: '자취생 살림템', daily: ['오늘 저녁 뭐 해먹었는지', '자취 초보 시행착오', '집안일 잔짜증'], intro: ['주방용품', '청소·수납템', '주방가전'], personaName: '호들갑 꿀템/리얼 찐리뷰어 (다이소/코스트코 스타일)', backstory: '1인 가구 자취 3년차 · 원룸 거주 · 도보/지하철 이동 · 취미는 넷플릭스+요리', targetAge: '20-30대', handle: 'self_living_tips' },
+      { label: '신혼부부 살림', daily: ['부부 티키타카', '살림 분담 썰', '집들이 준비기'], intro: ['가전', '인테리어 소품', '캠핑용품'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '결혼 1년차 신혼부부 · 아파트 전세 거주 · 맞벌이 · 취미는 주말 캠핑', targetAge: '30대', handle: 'newlywed_diary' },
+      { label: '미니멀 라이프', daily: ['비움 기록', '정리 전후 비교'], intro: ['수납/정리 도구', '워킹화'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '1인 가구 · 미니멀 라이프 2년차 · 자전거 이동 · 취미는 산책', targetAge: '30대', handle: 'minimal_life_log' },
     ],
   },
   {
     label: '육아/부부일상',
     icon: '👶',
     items: [
-      { label: '초보 부모 일상', daily: ['육아 웃픈 썰', '아이 성장 기록'], intro: ['육아용품', '유아식'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '돌쟁이 아이 키우는 초보 부모 · 아파트 거주 · 자차 이동 · 취미는 육아템 리서치' },
-      { label: '워킹맘/대디', daily: ['시간관리 고충', '퇴근 후 육아 전쟁'], intro: ['시간절약템', '간편식', '커피용품'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '초등생 자녀 있는 워킹맘/대디 · 맞벌이 · 대중교통 이동 · 취미는 홈카페' },
+      { label: '초보 부모 일상', daily: ['육아 웃픈 썰', '아이 성장 기록'], intro: ['육아용품', '유아식'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '돌쟁이 아이 키우는 초보 부모 · 아파트 거주 · 자차 이동 · 취미는 육아템 리서치', targetAge: '30대', handle: 'newbie_parent_log' },
+      { label: '워킹맘/대디', daily: ['시간관리 고충', '퇴근 후 육아 전쟁'], intro: ['시간절약템', '간편식', '커피용품'], personaName: '현실 부부 일상/유머 (Hey Mongle 스타일)', backstory: '초등생 자녀 있는 워킹맘/대디 · 맞벌이 · 대중교통 이동 · 취미는 홈카페', targetAge: '30-40대', handle: 'workingparent_diary' },
     ],
   },
   {
     label: '뷰티/헬스',
     icon: '💄',
     items: [
-      { label: '홈트/운동 루틴', daily: ['오늘 운동 기록', '작심삼일 극복담'], intro: ['운동용품', '보충제', '아웃도어용품'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '직장인 홈트 3개월차 · 원룸 거주 · 도보 이동 · 취미는 등산·러닝' },
-      { label: '스킨케어 루틴', daily: ['피부 고민 기록', '루틴 변화 후기'], intro: ['화장품', '뷰티기기'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '20대 직장인 · 오피스텔 거주 · 대중교통 이동 · 취미는 독서' },
+      { label: '홈트/운동 루틴', daily: ['오늘 운동 기록', '작심삼일 극복담'], intro: ['운동용품', '보충제', '아웃도어용품'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '직장인 홈트 3개월차 · 원룸 거주 · 도보 이동 · 취미는 등산·러닝', targetAge: '20-30대', handle: 'hometraining_log' },
+      { label: '스킨케어 루틴', daily: ['피부 고민 기록', '루틴 변화 후기'], intro: ['화장품', '뷰티기기'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '20대 직장인 · 오피스텔 거주 · 대중교통 이동 · 취미는 독서', targetAge: '20대', handle: 'skincare_routine_log' },
     ],
   },
   {
     label: '반려동물',
     icon: '🐶',
     items: [
-      { label: '강아지 일상', daily: ['오늘 산책 기록', '웃긴 행동 관찰'], intro: ['사료·간식', '위생용품', '외출용품'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '강아지 집사 2년차 · 아파트 거주 · 매일 산책 · 취미는 드라이브' },
-      { label: '고양이 집사', daily: ['냥집사 하루', '츄르 반응 관찰'], intro: ['캣타워', '모래·간식', '인테리어 소품'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '고양이 두 마리 집사 · 원룸 거주 · 재택근무 · 취미는 인테리어 꾸미기' },
+      { label: '강아지 일상', daily: ['오늘 산책 기록', '웃긴 행동 관찰'], intro: ['사료·간식', '위생용품', '외출용품'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '강아지 집사 2년차 · 아파트 거주 · 매일 산책 · 취미는 드라이브', targetAge: '20-30대', handle: 'puppy_daily_diary' },
+      { label: '고양이 집사', daily: ['냥집사 하루', '츄르 반응 관찰'], intro: ['캣타워', '모래·간식', '인테리어 소품'], personaName: '공감 100% 힐링/위로형 감성 톤', backstory: '고양이 두 마리 집사 · 원룸 거주 · 재택근무 · 취미는 인테리어 꾸미기', targetAge: '20-30대', handle: 'cat_sitter_log' },
     ],
   },
   {
     label: '정보/트렌드',
     icon: '📚',
     items: [
-      { label: '재테크/절약', daily: ['오늘의 절약 기록', '가계부 공유'], intro: ['가성비템', '정기구독 서비스', '재테크 도서'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '사회초년생 · 자취 중 · 대중교통 이용 · 취미는 재테크 스터디' },
-      { label: '생활꿀팁', daily: ['오늘 알게 된 꿀팁'], intro: ['아이디어 상품', '수납용품'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '평범한 직장인 · 자취 중 · 대중교통 이용 · 취미는 정리정돈' },
+      { label: '재테크/절약', daily: ['오늘의 절약 기록', '가계부 공유'], intro: ['가성비템', '정기구독 서비스', '재테크 도서'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '사회초년생 · 자취 중 · 대중교통 이용 · 취미는 재테크 스터디', targetAge: '20-30대', handle: 'saving_money_log' },
+      { label: '생활꿀팁', daily: ['오늘 알게 된 꿀팁'], intro: ['아이디어 상품', '수납용품'], personaName: '인사이트/팩트 요약형 전문가 (지식/트렌드 큐레이터)', backstory: '평범한 직장인 · 자취 중 · 대중교통 이용 · 취미는 정리정돈', targetAge: '20-30대', handle: 'life_hack_tip_log' },
     ],
   },
 ];
@@ -118,7 +119,7 @@ const STEPS: { key: keyof AccountPlan; title: string; desc: string }[] = [
   { key: 'step_threads_connected', title: '4. 쓰레드 전환 + 연동', desc: '인스타에서 쓰레드로 넘어간 뒤 "내 쓰레드 관리"에서 실제 계정과 연동해요.' },
 ];
 
-const EMPTY_FORM = { label: '', target_age: '', target_gender: '', category: '', persona_key: '', notes: '', backstory: '' };
+const EMPTY_FORM = { label: '', target_age: '', target_gender: '', category: '', persona_key: '', notes: '', backstory: '', suggested_handle: '' };
 
 function findConceptLeaf(category: string | null, saved: ConceptLeaf[]): ConceptLeaf | null {
   if (!category) return null;
@@ -173,6 +174,8 @@ export default function AccountPlansPage() {
         intro: data.concept.intro || [],
         backstory: data.concept.backstory || '',
         personaName: data.concept.personaName,
+        targetAge: data.concept.targetAge || undefined,
+        handle: data.concept.handle || undefined,
       };
       setPicker((s) => ({ ...s, leaf, isNewSuggestion: true }));
     } catch (err) {
@@ -184,13 +187,15 @@ export default function AccountPlansPage() {
 
   async function commitConcept(leaf: ConceptLeaf, gender: string) {
     const persona = systemPersonas.find((sp) => sp.name === leaf.personaName);
-    const patch = {
+    const patch: Record<string, unknown> = {
       category: leaf.label,
       target_gender: gender,
       persona_id: persona?.id || null,
       persona_is_system: true,
       backstory: leaf.backstory,
     };
+    if (leaf.targetAge) patch.target_age = leaf.targetAge;
+    if (leaf.handle) patch.suggested_handle = leaf.handle;
     if (picker.forPlanId) {
       await fetch(`/api/account-plans/${picker.forPlanId}`, {
         method: 'PATCH',
@@ -201,21 +206,46 @@ export default function AccountPlansPage() {
     } else {
       setForm((f) => ({
         ...f,
+        label: f.label.trim() ? f.label : leaf.label,
         category: leaf.label,
+        target_age: leaf.targetAge || f.target_age,
         target_gender: gender,
         persona_key: persona ? `sys:${persona.id}` : f.persona_key,
         backstory: leaf.backstory,
+        suggested_handle: leaf.handle || f.suggested_handle,
       }));
     }
     if (picker.isNewSuggestion) {
       fetch('/api/concepts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: leaf.label, daily: leaf.daily, intro: leaf.intro, backstory: leaf.backstory, persona_name: leaf.personaName }),
+        body: JSON.stringify({
+          label: leaf.label,
+          daily: leaf.daily,
+          intro: leaf.intro,
+          backstory: leaf.backstory,
+          persona_name: leaf.personaName,
+          target_age: leaf.targetAge,
+          handle: leaf.handle,
+        }),
       }).then(() =>
         fetch('/api/concepts')
           .then((r) => r.json())
-          .then((d) => setSavedConcepts((d.concepts || []).map((c: { label: string; daily: string[]; intro: string[]; backstory: string | null; persona_name: string }) => ({ label: c.label, daily: c.daily, intro: c.intro, backstory: c.backstory || '', personaName: c.persona_name }))))
+          .then((d) =>
+            setSavedConcepts(
+              (d.concepts || []).map(
+                (c: { label: string; daily: string[]; intro: string[]; backstory: string | null; persona_name: string; target_age: string | null; handle: string | null }) => ({
+                  label: c.label,
+                  daily: c.daily,
+                  intro: c.intro,
+                  backstory: c.backstory || '',
+                  personaName: c.persona_name,
+                  targetAge: c.target_age || undefined,
+                  handle: c.handle || undefined,
+                })
+              )
+            )
+          )
       );
     }
     closePicker();
@@ -229,12 +259,14 @@ export default function AccountPlansPage() {
       .then((r) => r.json())
       .then((d) =>
         setSavedConcepts(
-          (d.concepts || []).map((c: { label: string; daily: string[]; intro: string[]; backstory: string | null; persona_name: string }) => ({
+          (d.concepts || []).map((c: { label: string; daily: string[]; intro: string[]; backstory: string | null; persona_name: string; target_age: string | null; handle: string | null }) => ({
             label: c.label,
             daily: c.daily,
             intro: c.intro,
             backstory: c.backstory || '',
             personaName: c.persona_name,
+            targetAge: c.target_age || undefined,
+            handle: c.handle || undefined,
           }))
         )
       );
@@ -272,6 +304,7 @@ export default function AccountPlansPage() {
           persona_is_system: scope === 'sys',
           notes: form.notes,
           backstory: form.backstory,
+          suggested_handle: form.suggested_handle,
         }),
       });
       setForm(EMPTY_FORM);
@@ -413,6 +446,7 @@ export default function AccountPlansPage() {
                   {p.target_age && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.target_age}</span>}
                   {p.target_gender && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.target_gender}</span>}
                   {p.category && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.category}</span>}
+                  {p.suggested_handle && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">🆔 @{p.suggested_handle}</span>}
                   <button onClick={() => openPicker(p.id)} className="text-[10px] text-accent font-bold underline">
                     🧭 컨셉 다시 고르기
                   </button>
@@ -606,6 +640,15 @@ export default function AccountPlansPage() {
                 })()}
               </div>
               <div>
+                <label className="text-[11px] font-bold text-neutral-500 mb-1 block">추천 아이디</label>
+                <input
+                  value={form.suggested_handle}
+                  onChange={(e) => setForm((f) => ({ ...f, suggested_handle: e.target.value }))}
+                  placeholder="예: fruit_alba_diary (컨셉 고르면 자동 채워짐)"
+                  className="w-full border border-border px-3 py-2.5 text-sm"
+                />
+              </div>
+              <div>
                 <label className="text-[11px] font-bold text-neutral-500 mb-1 block">설정 (근무지/거주지/이동수단/취미)</label>
                 <input
                   value={form.backstory}
@@ -716,6 +759,8 @@ export default function AccountPlansPage() {
                   ← 세부 컨셉 다시 고르기
                 </button>
                 <h2 className="font-black mb-1">{picker.leaf.label}</h2>
+                {picker.leaf.targetAge && <div className="text-xs text-neutral-500 mb-1">🎯 추천 타겟연령: {picker.leaf.targetAge}</div>}
+                {picker.leaf.handle && <div className="text-xs text-neutral-500 mb-1">🆔 추천 아이디: @{picker.leaf.handle}</div>}
                 {picker.leaf.backstory && <div className="text-xs text-neutral-500 mb-1">👤 설정: {picker.leaf.backstory}</div>}
                 <div className="text-xs text-neutral-500 mb-1">📝 평소 소재: {picker.leaf.daily.join(' · ')}</div>
                 <div className="text-xs text-neutral-500 mb-4">🛒 나중에 소개: {picker.leaf.intro.join(' · ')}</div>

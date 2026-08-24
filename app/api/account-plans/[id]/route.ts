@@ -15,6 +15,7 @@ const FIELDS = [
   'persona_is_system',
   'notes',
   'backstory',
+  'suggested_handle',
   'sort_order',
   'ratio_daily',
   'ratio_shopping',

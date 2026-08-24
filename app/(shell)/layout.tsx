@@ -5,11 +5,11 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 const NAV_ITEMS = [
+  { href: '/dashboard/account-plans', label: '1. 계정 확장 플랜' },
   { href: '/dashboard/insights', label: '트렌드 & 인사이트' },
   { href: '/dashboard/benchmark', label: '벤치마킹 보관함' },
   { href: '/dashboard/threads-archive', label: '내 게시물 보관함', premium: true },
   { href: '/dashboard/personas', label: '페르소나 관리' },
-  { href: '/dashboard/account-plans', label: '계정 확장 플랜' },
   { href: '/dashboard/ai-worker', label: '로컬 워커 연결' },
   { href: '/dashboard/threads-manage', label: '내 쓰레드 관리' },
   { href: '/dashboard/videos', label: '유쓰레드 아카이브', premium: true },

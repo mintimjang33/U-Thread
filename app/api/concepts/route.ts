@@ -34,6 +34,8 @@ export async function POST(request: Request) {
       intro: Array.isArray(body.intro) ? body.intro : [],
       backstory: body.backstory || null,
       persona_name: body.persona_name || null,
+      target_age: body.target_age || null,
+      handle: body.handle || null,
     })
     .select()
     .single();

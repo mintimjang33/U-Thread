@@ -38,6 +38,7 @@ export async function POST(request: Request) {
       persona_is_system: !!body.persona_is_system,
       notes: body.notes || null,
       backstory: body.backstory || null,
+      suggested_handle: body.suggested_handle || null,
     })
     .select()
     .single();
