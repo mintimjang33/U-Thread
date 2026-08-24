@@ -35,6 +35,9 @@ const ALLOWED_TABLES = [
   'ut_editor_defaults',
   'ut_revenue_posts',
   'ut_archive_videos',
+  'ut_account_plans',
+  'ut_saved_concepts',
+  'ut_worker_jobs',
 ];
 
 function resolveUserId(userId?: string): string {
@@ -591,6 +594,9 @@ const baseHandler = createMcpHandler(
       '발행 후 실제 성과 확인(get_post_insights), 멘션 조회/답글(list_mentions/reply_to_mention — 답글 전 사람 승인 필수), ' +
       '쿠팡파트너스 상품검색/딥링크(search_coupang_products/get_coupang_deeplink — API 미승인 상태면 generate_thread_draft의 affiliateComment로 링크를 직접 넘길 것), ' +
       '네이버 트렌드 키워드(get_trend_keywords), GitHub 저장소 조회(list_github_files/get_github_file)를 제공한다. ' +
+      '계정 확장 플랜(ut_account_plans — 계정별 진행단계/미션비율/컨셉/설정/실제 지메일·인스타·틱톡 아이디)과 ' +
+      'AI 추천 컨셉 저장함(ut_saved_concepts), 로컬 워커 작업 상태(ut_worker_jobs)도 범용 CRUD로 다룰 수 있다 ' +
+      '(단, ut_worker_pairing에는 인증 토큰이 들어있어 ALLOWED_TABLES에서 의도적으로 제외했다 — 직접 노출 금지). ' +
       'userId를 요구하는 도구는 생략시 MCP_OWNER_USER_ID(운영자 본인 계정)를 기본으로 사용한다.',
     verboseLogs: true,
   }
