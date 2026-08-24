@@ -87,28 +87,64 @@ async function safeEvaluate(page, fn, arg, retries = 2) {
 // 닫을 수 있게 마지막으로 띄운 브라우저 인스턴스를 모듈 스코프에 보관해둔다.
 let currentBrowser = null;
 
-async function closeBrowser() {
-  if (!currentBrowser) return;
-  const browser = currentBrowser;
-  currentBrowser = null;
-  const proc = browser.process ? browser.process() : null;
+// 워커(node)가 재시작되면 이전 실행이 띄운 크롬에 대한 메모리 참조(currentBrowser)는
+// 사라지지만, 실제 크롬 창(OS 프로세스)은 그대로 남아있을 수 있다. 이 경우 currentBrowser로는
+// 절대 못 찾으므로, 우리 자동화 전용 프로필 경로(u-thread-worker\chrome-profile)로 실행 중인
+// chrome.exe를 커맨드라인 기준으로 직접 찾아서 강제 종료한다 — 프로세스 재시작과 무관하게 동작.
+function killOrphanChromeProcesses() {
+  if (process.platform !== 'win32') return Promise.resolve([]);
+  const { spawn } = require('child_process');
+  const psScript = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like '*u-thread-worker*' } | ForEach-Object { Write-Output $_.ProcessId; Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+  return new Promise((resolve) => {
+    let out = '';
+    const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', psScript]);
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {}
+      resolve([]);
+    }, 6000);
+    child.stdout.on('data', (d) => (out += d));
+    child.on('close', () => {
+      clearTimeout(timer);
+      resolve(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      console.log('[워커] 크롬 프로세스 정리 실행 실패:', err.message);
+      resolve([]);
+    });
+  });
+}
 
-  try {
-    // 실제 구글 크롬은 "백그라운드 앱 계속 실행" 설정이나 작업 도중(evaluate 등)
-    // close()를 호출하면 응답이 없거나 창만 남는 경우가 있어, 무한정 기다리지 않는다.
-    await Promise.race([browser.close(), new Promise((resolve) => setTimeout(resolve, 3000))]);
-  } catch (err) {
-    console.log('[워커] browser.close() 중 에러(강제 종료로 이어감):', err.message);
+async function closeBrowser() {
+  if (currentBrowser) {
+    const browser = currentBrowser;
+    currentBrowser = null;
+    const proc = browser.process ? browser.process() : null;
+
+    try {
+      // 실제 구글 크롬은 "백그라운드 앱 계속 실행" 설정이나 작업 도중(evaluate 등)
+      // close()를 호출하면 응답이 없거나 창만 남는 경우가 있어, 무한정 기다리지 않는다.
+      await Promise.race([browser.close(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+    } catch (err) {
+      console.log('[워커] browser.close() 중 에러(강제 종료로 이어감):', err.message);
+    }
+
+    if (proc && proc.exitCode === null && !proc.killed) {
+      try {
+        proc.kill();
+      } catch (err) {
+        console.log('[워커] 프로세스 강제 종료 실패:', err.message);
+      }
+    }
   }
 
-  // close()로 안 꺼졌으면 프로세스를 직접 강제 종료한다.
-  if (proc && proc.exitCode === null && !proc.killed) {
-    console.log('[워커] 크롬 창이 안 닫혀서 강제 종료합니다.');
-    try {
-      proc.kill();
-    } catch (err) {
-      console.log('[워커] 강제 종료 실패:', err.message);
-    }
+  const killedPids = await killOrphanChromeProcesses();
+  if (killedPids.length) {
+    console.log(`[워커] 자동화 크롬 프로세스 정리 완료 (PID: ${killedPids.join(', ')})`);
+  } else {
+    console.log('[워커] 정리할 자동화 크롬 프로세스 없음.');
   }
 }
 
