@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer-core');
 const path = require('path');
 const os = require('os');
+const { generateViaClaude } = require('./generate');
 
 const CHROME_PATHS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -9,16 +10,44 @@ const CHROME_PATHS = [
 const PROFILE_DIR = path.join(os.homedir(), '.u-thread-worker', 'chrome-profile');
 
 // ⚠️ 실제 로그인된 쓰레드 세션으로 검증되지 않음. 최초 실행은 반드시 headless:false로 눈으로 확인할 것.
-// 쓰레드 DOM 구조가 바뀌면 여기 셀렉터만 고치면 된다.
+// 쓰레드 DOM 구조가 바뀌면 여기 셀렉터만 고치면 된다. 특히 replyButton/commentInput/submitButton은
+// 아직 실전 검증 못 함 — 처음 댓글 기능 켜서 돌려볼 땐 반드시 화면으로 지켜볼 것.
 const SELECTORS = {
   postContainer: 'div[data-pressable-container="true"]',
   postText: 'span[dir="auto"]',
   likeButton: 'svg[aria-label="좋아요"]',
+  replyButton: 'svg[aria-label="댓글"], svg[aria-label="답글"]',
+  commentInput: 'div[contenteditable="true"]',
+  submitButton: 'div[role="button"]:has-text("게시"), button:has-text("게시")',
 };
 
 const MIN_LIKES = 200;
 const MIN_REPLIES = 50;
 const MAX_LIKES_PER_SESSION = 5; // 봇 탐지 회피 — 짧은 시간에 너무 많이 누르지 않는다.
+const MAX_COMMENTS_PER_SESSION = 3; // 댓글은 좋아요보다 눈에 띄는 행동이라 더 보수적으로 제한.
+
+// 투더제이 방식 그대로: AI가 먼저 스팸/부적절 여부를 판단하고, 통과한 글에만 짧은 댓글을 만든다.
+async function judgeAndDraftComment(postText) {
+  const prompt = `아래 쓰레드(Threads) 게시물에 댓글을 달아도 될지 판단해라.
+거절 기준(하나라도 해당하면 거절): 스팸·사기·판매권유, 성인 콘텐츠, 정치적으로 민감한 내용, 만남·연락처 교환 요구, 신청서·지원서 작성 요구.
+거절이면 다른 설명 없이 정확히 이 JSON만 출력: {"ok": false}
+허용이면, 게시물과 같은 언어로, 광고 티 안 나게 진짜 사람이 남긴 것처럼 자연스러운 1문장 이내의 짧은 댓글을 만들어서 이 형식으로만 출력: {"ok": true, "comment": "..."}
+
+게시물:
+"""${postText.slice(0, 500)}"""`;
+
+  try {
+    const raw = await generateViaClaude(prompt);
+    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
+    const parsed = JSON.parse(cleaned);
+    if (parsed?.ok && typeof parsed.comment === 'string' && parsed.comment.trim()) {
+      return parsed.comment.trim();
+    }
+  } catch {
+    // 판단 실패 시 안전하게 댓글을 달지 않는다.
+  }
+  return null;
+}
 
 function findChrome() {
   const fs = require('fs');
@@ -85,6 +114,7 @@ async function collectBenchmark(input) {
 
     const items = [];
     let likesUsed = 0;
+    let commentsUsed = 0;
 
     for (let scroll = 0; scroll < (input.maxScrolls || 5); scroll++) {
       const candidates =
@@ -126,11 +156,56 @@ async function collectBenchmark(input) {
         }
       }
 
+      // 투더제이 방식: 텍스트 위주 글 중 하나를 골라 AI가 스팸 여부 판단 → 통과하면 짧은 댓글 작성.
+      // 좋아요보다 눈에 띄는 행동이라 세션당 훨씬 적게(최대 3개) 제한한다.
+      if (commentsUsed < MAX_COMMENTS_PER_SESSION) {
+        const targetIdx = candidates.findIndex((c) => !c.hasMedia && c.text.trim().length > 10);
+        if (targetIdx >= 0) {
+          try {
+            const comment = await judgeAndDraftComment(candidates[targetIdx].text);
+            if (comment) {
+              const postHandles = await page.$$(SELECTORS.postContainer);
+              const postHandle = postHandles[targetIdx];
+              const replyBtn = postHandle && (await postHandle.$(SELECTORS.replyButton));
+              if (replyBtn) {
+                await replyBtn.click();
+                await new Promise((r) => setTimeout(r, 1500));
+                const input = await page.$(SELECTORS.commentInput);
+                if (input) {
+                  // 한 글자씩 타이핑하면 봇 특유의 일정한 리듬이 감지된다(투더제이/남다른AI 둘 다 지적한 부분).
+                  // 대신 클립보드에 복사해서 Ctrl+V로 한 번에 붙여넣어 사람이 메모장에서 쓰고 붙여넣는 것처럼 흉내낸다.
+                  await input.click();
+                  await browser.defaultBrowserContext().overridePermissions('https://www.threads.net', ['clipboard-read', 'clipboard-write']);
+                  await page.evaluate((text) => navigator.clipboard.writeText(text), comment);
+                  await page.keyboard.down('Control');
+                  await page.keyboard.press('KeyV');
+                  await page.keyboard.up('Control');
+                  await new Promise((r) => setTimeout(r, 800));
+                  const submitBtn = await page.$(SELECTORS.submitButton);
+                  if (submitBtn) {
+                    await submitBtn.click();
+                    commentsUsed++;
+                    console.log(`[댓글] "${comment}" 게시 완료`);
+                    await new Promise((r) => setTimeout(r, 2000 + Math.random() * 2000));
+                  } else {
+                    console.log('[댓글] 게시 버튼을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.submitButton)');
+                  }
+                } else {
+                  console.log('[댓글] 입력창을 못 찾음 — 셀렉터 확인 필요 (SELECTORS.commentInput)');
+                }
+              }
+            }
+          } catch (err) {
+            console.log('[댓글] 실패(무시하고 계속):', err.message);
+          }
+        }
+      }
+
       await safeEvaluate(page, () => window.scrollBy(0, window.innerHeight * 1.5)).catch(() => {});
       await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1500));
     }
 
-    return { items, likesUsed, note: '좋아요/댓글 수 필터는 아직 미적용 — DOM에서 수치 파싱 검증 필요' };
+    return { items, likesUsed, commentsUsed, note: '좋아요/댓글 수 필터는 아직 미적용 — DOM에서 수치 파싱 검증 필요' };
   } finally {
     await browser.close();
   }

@@ -87,7 +87,9 @@ export default function AiWorkerPage() {
         if (r.job.status === 'done') {
           clearInterval(poll);
           setCollecting(false);
-          setCollectResult(`✅ ${r.job.output?.items?.length ?? 0}개 수집해서 벤치마킹 보관함에 넣었어요.`);
+          setCollectResult(
+            `✅ ${r.job.output?.items?.length ?? 0}개 수집해서 벤치마킹 보관함에 넣었어요 (좋아요 ${r.job.output?.likesUsed ?? 0}개, 댓글 ${r.job.output?.commentsUsed ?? 0}개).`
+          );
         } else if (r.job.status === 'failed') {
           clearInterval(poll);
           setCollecting(false);
@@ -185,7 +187,7 @@ export default function AiWorkerPage() {
       <div className="border border-border p-6">
         <h2 className="font-black text-sm mb-1">3. 원본 수집 자동화</h2>
         <p className="text-xs text-neutral-400 mb-4">
-          키워드로 쓰레드를 검색해서 텍스트 위주 글을 자동으로 벤치마킹 보관함에 모아요. 워커가 온라인이어야 동작해요. 최초 1회는 워커가 띄우는 크롬 창에서 쓰레드 로그인이 필요해요(창이 뜨면 최대 5분 대기하니 그 안에 로그인하면 됨) — 이후엔 계속 로그인 상태가 유지돼요.
+          키워드로 쓰레드를 검색해서 텍스트 위주 글을 자동으로 벤치마킹 보관함에 모으고, 세션당 좋아요 최대 5개·댓글 최대 3개까지 자연스럽게 남겨요(AI가 먼저 스팸/부적절 여부를 판단하고, 통과한 글에만 댓글 작성). 워커가 온라인이어야 동작해요. 최초 1회는 워커가 띄우는 크롬 창에서 쓰레드 로그인이 필요해요(창이 뜨면 최대 5분 대기하니 그 안에 로그인하면 됨) — 이후엔 계속 로그인 상태가 유지돼요.
         </p>
         <div className="flex gap-2 mb-2">
           <input
