@@ -1,6 +1,7 @@
 const http = require('http');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail } = require('./generate');
+const { closeBrowser } = require('./collectBenchmark');
 
 const PORT = 5757;
 const MAX_LOG_LINES = 300;
@@ -231,8 +232,12 @@ function startDashboard() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
       console.log('[대시보드] 종료 버튼으로 워커를 끕니다.');
-      // 응답을 먼저 보내고 나서 살짝 뒤에 종료해야 브라우저가 "종료됨" 메시지를 받을 수 있다.
-      setTimeout(() => process.exit(0), 300);
+      // 응답을 먼저 보내고, 크롬(퍼펫티어) 창을 닫은 뒤, 워커 프로세스를 종료한다.
+      // 크롬은 워커와 별개의 OS 프로세스라 process.exit()만으로는 안 닫힌다.
+      setTimeout(async () => {
+        await closeBrowser();
+        process.exit(0);
+      }, 300);
       return;
     }
     if (req.url === '/api/action/recheck' && req.method === 'POST') {

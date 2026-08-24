@@ -82,6 +82,22 @@ async function safeEvaluate(page, fn, arg, retries = 2) {
   }
 }
 
+// 퍼펫티어로 띄운 크롬은 워커(node) 프로세스와 별개의 OS 프로세스라서, 대시보드의
+// "워커 종료" 버튼이 process.exit()만 호출해서는 이 창이 안 닫힌다. 종료 시 같이
+// 닫을 수 있게 마지막으로 띄운 브라우저 인스턴스를 모듈 스코프에 보관해둔다.
+let currentBrowser = null;
+
+async function closeBrowser() {
+  if (currentBrowser) {
+    try {
+      await currentBrowser.close();
+    } catch {
+      // 이미 닫혀있거나 응답이 없으면 무시하고 종료 진행
+    }
+    currentBrowser = null;
+  }
+}
+
 async function collectBenchmark(input) {
   const executablePath = findChrome();
   if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
@@ -92,6 +108,7 @@ async function collectBenchmark(input) {
     userDataDir: PROFILE_DIR,
     args: ['--no-first-run', '--no-default-browser-check'],
   });
+  currentBrowser = browser;
 
   try {
     const page = await browser.newPage();
@@ -260,4 +277,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, MIN_LIKES, MIN_REPLIES };
