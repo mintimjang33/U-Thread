@@ -135,8 +135,30 @@ async function collectBenchmark(input) {
 
       console.log(`[디버그] scroll ${scroll}: postContainer ${candidates.length}개 발견, hasMedia=${candidates.filter((c) => c.hasMedia).length}개, 텍스트있음=${candidates.filter((c) => c.textLen > 0).length}개`);
 
+      if (scroll === 0) {
+        const detail = await safeEvaluate(
+          page,
+          (sel) => {
+            const posts = Array.from(document.querySelectorAll(sel.postContainer));
+            const first = posts[0];
+            if (!first) return null;
+            const imgs = Array.from(first.querySelectorAll('img, video')).map((m) => ({
+              tag: m.tagName,
+              clientWidth: m.clientWidth,
+              width: m.width,
+              src: (m.src || m.currentSrc || '').slice(0, 80),
+            }));
+            return { textPreview: (first.innerText || '').slice(0, 60), imgs, outerHtmlLen: first.outerHTML.length };
+          },
+          SELECTORS
+        ).catch(() => null);
+        if (detail) {
+          console.log('[디버그 상세] 첫 postContainer 텍스트:', detail.textPreview);
+          console.log('[디버그 상세] 첫 postContainer 안 img/video 목록:', JSON.stringify(detail.imgs));
+        }
+      }
+
       for (const c of candidates) {
-        if (c.hasMedia) continue; // 일단 텍스트 전용 글만 (원본 수집 1차 범위)
         if (!c.text.trim()) continue;
         if (items.find((it) => it.content === c.text)) continue;
         items.push({ content: c.text, source: `threads.net 검색:${keyword}` });
@@ -159,7 +181,7 @@ async function collectBenchmark(input) {
       // 투더제이 방식: 텍스트 위주 글 중 하나를 골라 AI가 스팸 여부 판단 → 통과하면 짧은 댓글 작성.
       // 좋아요보다 눈에 띄는 행동이라 세션당 훨씬 적게(최대 3개) 제한한다.
       if (commentsUsed < MAX_COMMENTS_PER_SESSION) {
-        const targetIdx = candidates.findIndex((c) => !c.hasMedia && c.text.trim().length > 10);
+        const targetIdx = candidates.findIndex((c) => c.text.trim().length > 10);
         if (targetIdx >= 0) {
           try {
             const comment = await judgeAndDraftComment(candidates[targetIdx].text);
