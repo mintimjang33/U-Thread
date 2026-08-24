@@ -36,13 +36,18 @@ const MAX_COMMENTS_PER_SESSION = 3; // 댓글은 좋아요보다 눈에 띄는 �
 
 // 투더제이 방식 그대로: AI가 먼저 스팸/부적절 여부를 판단하고, 통과한 글에만 짧은 댓글을 만든다.
 async function judgeAndDraftComment(postText) {
+  // 큰따옴표 3개(""")로 게시물을 감쌌더니 윈도우 명령줄 인자 이스케이프 과정에서 내용이 통째로 유실되는
+  // 문제가 있었다(AI가 "게시물 내용이 안 보인다"고 계속 응답함, 2026-08-24 실측 확인). 따옴표가 없는
+  // 구분자로 바꿔서 이스케이프 충돌을 피한다.
   const prompt = `아래 쓰레드(Threads) 게시물에 댓글을 달아도 될지 판단해라.
-거절 기준(하나라도 해당하면 거절): 스팸·사기·판매권유, 성인 콘텐츠, 정치적으로 민감한 내용, 만남·연락처 교환 요구, 신청서·지원서 작성 요구.
-거절이면 다른 설명 없이 정확히 이 JSON만 출력: {"ok": false}
-허용이면, 게시물과 같은 언어로, 광고 티 안 나게 진짜 사람이 남긴 것처럼 자연스러운 1문장 이내의 짧은 댓글을 만들어서 이 형식으로만 출력: {"ok": true, "comment": "..."}
+거절 기준(하나라도 해당하면 거절): 스팸/사기/판매권유, 성인 콘텐츠, 정치적으로 민감한 내용, 만남/연락처 교환 요구, 신청서/지원서 작성 요구.
+거절이면 다른 설명 없이 정확히 이 JSON만 출력: {ok: false}
+허용이면, 게시물과 같은 언어로, 광고 티 안 나게 진짜 사람이 남긴 것처럼 자연스러운 1문장 이내의 짧은 댓글을 만들어서 이 형식으로만 출력: {ok: true, comment: 여기에댓글}
+반드시 유효한 JSON 문법으로(키와 문자열 값에 큰따옴표 사용) 출력해라.
 
-게시물:
-"""${postText.slice(0, 500)}"""`;
+===게시물 시작===
+${postText.slice(0, 500)}
+===게시물 끝===`;
 
   try {
     const raw = await generateViaClaude(prompt);
@@ -247,9 +252,11 @@ async function collectBenchmark(input) {
       await new Promise((r) => setTimeout(r, 2000 + Math.random() * 1500));
     }
 
+    console.log('[디버그] 작업 완료 — 디버깅 편의를 위해 크롬 창은 자동으로 안 닫아요. 필요하면 직접 닫으세요.');
     return { items, likesUsed, commentsUsed, commentsLog, note: '좋아요/댓글 수 필터는 아직 미적용 — DOM에서 수치 파싱 검증 필요' };
-  } finally {
-    await browser.close();
+  } catch (err) {
+    console.log('[디버그] 작업 실패 — 원인 확인할 수 있게 크롬 창은 그대로 뒀어요:', err.message);
+    throw err;
   }
 }
 
