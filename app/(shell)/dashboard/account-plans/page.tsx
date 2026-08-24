@@ -21,6 +21,10 @@ type AccountPlan = {
   notes: string | null;
   backstory: string | null;
   suggested_handle: string | null;
+  actual_gmail: string | null;
+  actual_instagram_handle: string | null;
+  actual_subaccounts: string | null;
+  threads_account_id: string | null;
   ratio_daily: number;
   ratio_shopping: number;
   viral_view_threshold: number;
@@ -112,11 +116,70 @@ function computeMission(p: AccountPlan): { type: 'daily' | 'shopping'; locked: b
   return { type: wantsShopping ? 'shopping' : 'daily', locked: false };
 }
 
-const STEPS: { key: keyof AccountPlan; title: string; desc: string }[] = [
-  { key: 'step_gmail', title: '1. 지메일 계정 만들기', desc: '전화번호 대신 반드시 구글 계정(Gmail)으로 가입해야 인스타 부계정을 최대 5개까지 붙일 수 있어요.' },
-  { key: 'step_instagram', title: '2. 인스타그램 가입', desc: '방금 만든 Gmail로 인스타그램에 가입해요.' },
-  { key: 'step_subaccount', title: '3. 부계정 추가', desc: '인스타 설정 → 계정 추가에서 부계정을 만들어요 (계정 하나당 최대 5개). 처음엔 3개 정도로 시작 추천.' },
-  { key: 'step_threads_connected', title: '4. 쓰레드 전환 + 연동', desc: '인스타에서 쓰레드로 넘어간 뒤 "내 쓰레드 관리"에서 실제 계정과 연동해요.' },
+const STEPS: {
+  key: keyof AccountPlan;
+  title: string;
+  desc: string;
+  guide: string[];
+  registerField?: 'actual_gmail' | 'actual_instagram_handle' | 'actual_subaccounts';
+  registerLabel?: string;
+  registerPlaceholder?: string;
+}[] = [
+  {
+    key: 'step_gmail',
+    title: '1. 지메일 계정 만들기',
+    desc: '전화번호 대신 반드시 구글 계정(Gmail)으로 가입해야 인스타 부계정을 최대 5개까지 붙일 수 있어요.',
+    guide: [
+      'accounts.google.com/signup 접속 (모바일 브라우저 추천)',
+      '"본인 계정" 선택 → 이름 입력 (실명 아니어도 됨)',
+      '사용자 이름에 위 "추천 아이디"의 지메일 버전을 입력 (이미 있으면 숫자를 붙여서 조정)',
+      '비밀번호 설정 → 전화번호 인증 단계는 상황에 따라 건너뛸 수 있음',
+      '가입 완료되면 아래에 실제로 만든 지메일 주소를 등록',
+    ],
+    registerField: 'actual_gmail',
+    registerLabel: '실제 만든 지메일',
+    registerPlaceholder: '예: dogteacher.note@gmail.com',
+  },
+  {
+    key: 'step_instagram',
+    title: '2. 인스타그램 가입',
+    desc: '방금 만든 Gmail로 인스타그램에 가입해요.',
+    guide: [
+      '인스타그램 앱(모바일 추천) 실행 → "새 계정 만들기"',
+      '"전화번호 또는 이메일 주소로 가입" 선택 → 반드시 이메일 탭에서 위 지메일 입력 (전화번호 아님)',
+      '사용자 이름에 "추천 아이디"를 그대로 입력 (이미 있으면 자동으로 대안이 제시됨)',
+      '프로필 사진/소개글은 나중에 채워도 됨 → 가입 완료',
+      '가입 완료되면 아래에 실제 인스타 아이디를 등록',
+    ],
+    registerField: 'actual_instagram_handle',
+    registerLabel: '실제 인스타 아이디',
+    registerPlaceholder: '예: dog_teacher_note',
+  },
+  {
+    key: 'step_subaccount',
+    title: '3. 부계정 추가',
+    desc: '인스타 설정 → 계정 추가에서 부계정을 만들어요 (계정 하나당 최대 5개). 처음엔 3개 정도로 시작 추천.',
+    guide: [
+      '프로필 → 우측 상단 메뉴 → "계정 추가" → "새 계정 만들기"',
+      '(기존 계정으로 로그인이 아니라 반드시 새 계정 만들기) — 같은 Gmail 하위에 부계정으로 묶여야 함',
+      '⚠️ 이 방식은 "연좌제" 위험이 있음 — 부계정 중 하나가 정지되면 같은 Gmail 아래 계정들이 같이 위험해질 수 있음. 계정 나이가 어릴수록 더 조심스럽게 운영 추천',
+      '컨셉/타겟이 다른 계정이면 사용자 이름·소개글도 그 컨셉에 맞게 새로 설정',
+    ],
+    registerField: 'actual_subaccounts',
+    registerLabel: '등록한 부계정들 (쉼표로 구분)',
+    registerPlaceholder: '예: dog_teacher_note, cat_daily_life',
+  },
+  {
+    key: 'step_threads_connected',
+    title: '4. 쓰레드 전환 + 연동',
+    desc: '인스타에서 쓰레드로 넘어간 뒤 "내 쓰레드 관리"에서 실제 계정과 연동해요.',
+    guide: [
+      '인스타 앱에서 쓰레드(@) 아이콘 클릭 → 방금 만든 인스타 계정으로 쓰레드 프로필 생성',
+      'U-Thread "내 쓰레드 관리" 메뉴로 이동',
+      '"THREADS 계정 연동하기" 버튼 클릭 → Meta 로그인 화면에서 방금 만든 계정으로 로그인 → 권한 승인',
+      '연동 완료되면 아래 드롭다운에서 이 플랜과 실제 계정을 연결',
+    ],
+  },
 ];
 
 const EMPTY_FORM = { label: '', target_age: '', target_gender: '', category: '', persona_key: '', notes: '', backstory: '', suggested_handle: '' };
@@ -145,6 +208,7 @@ export default function AccountPlansPage() {
   const [viewCountInput, setViewCountInput] = useState<Record<string, string>>({});
   const [draftStatus, setDraftStatus] = useState<Record<string, string>>({});
   const [savedConcepts, setSavedConcepts] = useState<ConceptLeaf[]>([]);
+  const [threadsAccounts, setThreadsAccounts] = useState<{ id: string; username: string | null; threads_user_id: string }[]>([]);
   const [recommending, setRecommending] = useState(false);
   const [recommendError, setRecommendError] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ open: boolean; forPlanId: string | null; groupIdx: number | null; leaf: ConceptLeaf | null; isNewSuggestion: boolean }>({
@@ -262,6 +326,7 @@ export default function AccountPlansPage() {
     fetch('/api/account-plans').then((r) => r.json()).then((d) => setPlans(d.plans || []));
     fetch('/api/personas').then((r) => r.json()).then((d) => setPersonas(d.personas || []));
     fetch('/api/personas/system').then((r) => r.json()).then((d) => setSystemPersonas(d.systemPersonas || []));
+    fetch('/api/threads-accounts').then((r) => r.json()).then((d) => setThreadsAccounts(d.accounts || []));
     fetch('/api/concepts')
       .then((r) => r.json())
       .then((d) =>
@@ -338,6 +403,15 @@ export default function AccountPlansPage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ persona_id: personaId || null, persona_is_system: scope === 'sys' }),
+    });
+    load();
+  }
+
+  async function updateField(planId: string, field: string, value: string | null) {
+    await fetch(`/api/account-plans/${planId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }),
     });
     load();
   }
@@ -532,18 +606,56 @@ export default function AccountPlansPage() {
 
                 <div className="space-y-2 mb-4">
                   {STEPS.map((s) => (
-                    <label key={String(s.key)} className="flex items-start gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={!!p[s.key]}
-                        onChange={() => toggleStep(p, s.key)}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <div className={`text-xs font-bold ${p[s.key] ? 'line-through text-neutral-300' : ''}`}>{s.title}</div>
-                        <div className="text-[11px] text-neutral-400">{s.desc}</div>
-                      </div>
-                    </label>
+                    <div key={String(s.key)} className="border border-border p-2.5">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" checked={!!p[s.key]} onChange={() => toggleStep(p, s.key)} className="mt-0.5" />
+                        <div>
+                          <div className={`text-xs font-bold ${p[s.key] ? 'line-through text-neutral-300' : ''}`}>{s.title}</div>
+                          <div className="text-[11px] text-neutral-400">{s.desc}</div>
+                        </div>
+                      </label>
+                      <details className="mt-2">
+                        <summary className="text-[11px] font-bold text-accent cursor-pointer">📋 만드는 방법 보기</summary>
+                        <ol className="list-decimal list-inside text-[11px] text-neutral-500 mt-2 space-y-1">
+                          {s.guide.map((g, i) => (
+                            <li key={i}>{g}</li>
+                          ))}
+                        </ol>
+
+                        {s.registerField && (
+                          <div className="mt-2">
+                            <label className="text-[11px] font-bold text-neutral-500 mb-1 block">{s.registerLabel}</label>
+                            <input
+                              defaultValue={(p[s.registerField] as string | null) || ''}
+                              onBlur={(e) => updateField(p.id, s.registerField as string, e.target.value)}
+                              placeholder={s.registerPlaceholder}
+                              className="w-full border border-border px-2 py-1.5 text-[11px]"
+                            />
+                          </div>
+                        )}
+
+                        {s.key === 'step_threads_connected' && (
+                          <div className="mt-2">
+                            <label className="text-[11px] font-bold text-neutral-500 mb-1 block">연동된 쓰레드 계정과 연결</label>
+                            <select
+                              value={p.threads_account_id || ''}
+                              onChange={(e) => updateField(p.id, 'threads_account_id', e.target.value || null)}
+                              className="w-full border border-border px-2 py-1.5 text-[11px]"
+                            >
+                              <option value="">선택 안 함</option>
+                              {threadsAccounts.map((ta) => (
+                                <option key={ta.id} value={ta.id}>
+                                  @{ta.username || ta.threads_user_id}
+                                </option>
+                              ))}
+                            </select>
+                            {threadsAccounts.length === 0 && (
+                              <div className="text-[11px] text-neutral-400 mt-1">아직 연동된 쓰레드 계정이 없어요 — "내 쓰레드 관리"에서 먼저 연동하세요.</div>
+                            )}
+                          </div>
+                        )}
+                      </details>
+                    </div>
                   ))}
                 </div>
 
