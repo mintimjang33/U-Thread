@@ -184,7 +184,9 @@ export default function AiWorkerPage() {
 
       <div className="border border-border p-6">
         <h2 className="font-black text-sm mb-1">3. 원본 수집 자동화</h2>
-        <p className="text-xs text-neutral-400 mb-4">키워드로 쓰레드를 검색해서 텍스트 위주 글을 자동으로 벤치마킹 보관함에 모아요. 워커가 온라인이어야 동작해요.</p>
+        <p className="text-xs text-neutral-400 mb-4">
+          키워드로 쓰레드를 검색해서 텍스트 위주 글을 자동으로 벤치마킹 보관함에 모아요. 워커가 온라인이어야 동작해요. 최초 1회는 워커가 띄우는 크롬 창에서 쓰레드 로그인이 필요해요(창이 뜨면 최대 5분 대기하니 그 안에 로그인하면 됨) — 이후엔 계속 로그인 상태가 유지돼요.
+        </p>
         <div className="flex gap-2 mb-2">
           <input
             value={keyword}

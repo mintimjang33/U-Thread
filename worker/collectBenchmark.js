@@ -43,9 +43,21 @@ async function collectBenchmark(input) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
 
-    const loggedIn = await page.evaluate(() => !document.body.innerText.includes('로그인'));
+    let loggedIn = await page.evaluate(() => !document.body.innerText.includes('로그인'));
     if (!loggedIn) {
-      throw new Error('threads.net에 로그인이 안 돼 있습니다. 워커가 띄운 크롬 창에서 먼저 로그인해주세요 (이후엔 프로필에 저장되어 자동 유지됨).');
+      console.log('⚠️ threads.net에 로그인이 안 되어 있습니다. 방금 뜬 크롬 창에서 직접 로그인해주세요 (최대 5분 대기, 한 번만 하면 이후엔 계속 유지됩니다).');
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        loggedIn = await page.evaluate(() => !document.body.innerText.includes('로그인')).catch(() => false);
+        if (loggedIn) break;
+      }
+      if (!loggedIn) {
+        throw new Error('로그인 대기 시간(5분) 초과. 다시 시도해주세요.');
+      }
+      console.log('✅ 로그인 확인됨 — 수집을 시작합니다.');
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise((r) => setTimeout(r, 2000));
     }
 
     const items = [];
