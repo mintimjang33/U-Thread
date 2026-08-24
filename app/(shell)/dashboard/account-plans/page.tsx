@@ -121,6 +121,12 @@ const STEPS: { key: keyof AccountPlan; title: string; desc: string }[] = [
 
 const EMPTY_FORM = { label: '', target_age: '', target_gender: '', category: '', persona_key: '', notes: '', backstory: '', suggested_handle: '' };
 
+// 지메일은 밑줄(_)이 안 되고 마침표(.)만 허용되므로, 인스타/틱톡용 handle에서 변환해서 보여준다.
+function deriveGmailId(handle?: string): string {
+  if (!handle) return '';
+  return handle.replace(/[^a-zA-Z0-9._]/g, '').replace(/_+/g, '.').replace(/\.+/g, '.').replace(/^\.|\.$/g, '');
+}
+
 function findConceptLeaf(category: string | null, saved: ConceptLeaf[]): ConceptLeaf | null {
   if (!category) return null;
   const flatStatic = CONCEPT_TREE.flatMap((g) => g.items);
@@ -188,6 +194,7 @@ export default function AccountPlansPage() {
   async function commitConcept(leaf: ConceptLeaf, gender: string) {
     const persona = systemPersonas.find((sp) => sp.name === leaf.personaName);
     const patch: Record<string, unknown> = {
+      label: leaf.label,
       category: leaf.label,
       target_gender: gender,
       persona_id: persona?.id || null,
@@ -206,7 +213,7 @@ export default function AccountPlansPage() {
     } else {
       setForm((f) => ({
         ...f,
-        label: f.label.trim() ? f.label : leaf.label,
+        label: leaf.label,
         category: leaf.label,
         target_age: leaf.targetAge || f.target_age,
         target_gender: gender,
@@ -446,7 +453,13 @@ export default function AccountPlansPage() {
                   {p.target_age && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.target_age}</span>}
                   {p.target_gender && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.target_gender}</span>}
                   {p.category && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">{p.category}</span>}
-                  {p.suggested_handle && <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">🆔 @{p.suggested_handle}</span>}
+                  {p.suggested_handle && (
+                    <>
+                      <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">🆔 인스타/쓰레드 @{p.suggested_handle}</span>
+                      <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">🎵 틱톡 @{p.suggested_handle}</span>
+                      <span className="text-[10px] bg-neutral-100 font-bold px-2 py-0.5">📧 {deriveGmailId(p.suggested_handle)}@gmail.com</span>
+                    </>
+                  )}
                   <button onClick={() => openPicker(p.id)} className="text-[10px] text-accent font-bold underline">
                     🧭 컨셉 다시 고르기
                   </button>
@@ -640,13 +653,18 @@ export default function AccountPlansPage() {
                 })()}
               </div>
               <div>
-                <label className="text-[11px] font-bold text-neutral-500 mb-1 block">추천 아이디</label>
+                <label className="text-[11px] font-bold text-neutral-500 mb-1 block">추천 아이디 (인스타/쓰레드/틱톡 공통)</label>
                 <input
                   value={form.suggested_handle}
                   onChange={(e) => setForm((f) => ({ ...f, suggested_handle: e.target.value }))}
                   placeholder="예: fruit_alba_diary (컨셉 고르면 자동 채워짐)"
                   className="w-full border border-border px-3 py-2.5 text-sm"
                 />
+                {form.suggested_handle && (
+                  <div className="text-[11px] text-neutral-400 mt-1">
+                    📧 지메일 추천: {deriveGmailId(form.suggested_handle)}@gmail.com — 어디까지나 추천이라 실제 가입할 때 이미 사용 중이면 숫자 등을 붙여서 다르게 만들어야 할 수 있어요. 실제로 만든 아이디로 나중에 이 칸을 고쳐두세요.
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-[11px] font-bold text-neutral-500 mb-1 block">설정 (근무지/거주지/이동수단/취미)</label>
@@ -760,7 +778,11 @@ export default function AccountPlansPage() {
                 </button>
                 <h2 className="font-black mb-1">{picker.leaf.label}</h2>
                 {picker.leaf.targetAge && <div className="text-xs text-neutral-500 mb-1">🎯 추천 타겟연령: {picker.leaf.targetAge}</div>}
-                {picker.leaf.handle && <div className="text-xs text-neutral-500 mb-1">🆔 추천 아이디: @{picker.leaf.handle}</div>}
+                {picker.leaf.handle && (
+                  <div className="text-xs text-neutral-500 mb-1">
+                    🆔 인스타/쓰레드: @{picker.leaf.handle} · 🎵 틱톡: @{picker.leaf.handle} · 📧 지메일: {deriveGmailId(picker.leaf.handle)}@gmail.com
+                  </div>
+                )}
                 {picker.leaf.backstory && <div className="text-xs text-neutral-500 mb-1">👤 설정: {picker.leaf.backstory}</div>}
                 <div className="text-xs text-neutral-500 mb-1">📝 평소 소재: {picker.leaf.daily.join(' · ')}</div>
                 <div className="text-xs text-neutral-500 mb-4">🛒 나중에 소개: {picker.leaf.intro.join(' · ')}</div>
