@@ -5,6 +5,7 @@ const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts } = require('./collectBenchmark');
+const accounts = require('./accounts');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
@@ -46,7 +47,13 @@ function savePrefs(data) {
 const PORT = 5757;
 const MAX_LOG_LINES = 300;
 const logs = [];
-let status = { state: 'starting', claudeEmail: null, apiBase: null, currentJob: null, threadsLoggedIn: null, threadsCheckedAt: null };
+let status = { state: 'starting', claudeEmail: null, apiBase: null, currentJob: null, threadsLoginStatus: {} };
+
+// 계정별 로그인 확인 결과를 status.threadsLoginStatus[accountId]에 기록한다.
+function setThreadsLoginStatus(accountId, loggedIn) {
+  const id = accountId || accounts.load().activeAccountId;
+  status = { ...status, threadsLoginStatus: { ...status.threadsLoginStatus, [id]: { loggedIn, checkedAt: new Date().toISOString() } } };
+}
 
 function pushLog(line) {
   logs.push({ time: new Date().toLocaleTimeString('ko-KR'), text: String(line) });
@@ -83,14 +90,15 @@ async function handleCollectAction(body) {
   // 시간(분) 단위를 실제 스크롤 횟수로 환산 — 정확한 시간제한은 아니고 대략적인 비례치.
   const maxScrolls = Math.max(3, Math.min(20, Math.round(minutes / 2)));
 
+  const accountId = body?.accountId || accounts.load().activeAccountId;
   const res = await fetch(config.apiBase + '/api/worker/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
-    body: JSON.stringify({ type: 'collect_benchmark', input: { keyword, maxScrolls } }),
+    body: JSON.stringify({ type: 'collect_benchmark', input: { keyword, maxScrolls, accountId } }),
   });
   if (!res.ok) throw new Error(`작업 생성 실패 (${res.status})`);
   const { job } = await res.json();
-  pushLog(`[대시보드] "${keyword}" 원본 수집 작업 등록 완료(${job.id.slice(0, 8)}) — 곧 처리됩니다.`);
+  pushLog(`[대시보드] "${keyword}" 원본 수집 작업 등록 완료(${job.id.slice(0, 8)}, 계정: ${accountId}) — 곧 처리됩니다.`);
   return job;
 }
 
@@ -106,6 +114,9 @@ async function handleKeyStatus(provider) {
 }
 
 async function handleListThreadsAccounts() {
+  // ⚠️ 이름이 같지만 다른 개념: 여기(handleListThreadsAccounts)는 "실제 발행"에 쓸 공식 API
+  // 연동 계정 목록(유쓰레드 웹 ut_threads_accounts)이고, accounts.js는 "좋아요/댓글/수집"용
+  // 브라우저 로그인 프로필 목록(로컬 전용)이다. 서로 다른 시스템이니 헷갈리지 말 것.
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
   const res = await fetch(config.apiBase + '/api/threads-accounts', {
@@ -116,18 +127,19 @@ async function handleListThreadsAccounts() {
   return { accounts: data.accounts || [], defaultThreadsAccountId: loadPrefs().defaultThreadsAccountId };
 }
 
-async function handleCheckAccountAction() {
+async function handleCheckAccountAction(accountId) {
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
+  const id = accountId || accounts.load().activeAccountId;
 
   const res = await fetch(config.apiBase + '/api/worker/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
-    body: JSON.stringify({ type: 'check_threads_login', input: {} }),
+    body: JSON.stringify({ type: 'check_threads_login', input: { accountId: id } }),
   });
   if (!res.ok) throw new Error(`작업 생성 실패 (${res.status})`);
   const { job } = await res.json();
-  pushLog(`[대시보드] 쓰레드 계정 연결 확인 작업 등록(${job.id.slice(0, 8)}) — 곧 처리됩니다.`);
+  pushLog(`[대시보드] "${id}" 계정 연결 확인 작업 등록(${job.id.slice(0, 8)}) — 곧 처리됩니다.`);
   return job;
 }
 
@@ -200,6 +212,7 @@ async function handleCustomCollectAction(body) {
     minLikes: Number(body?.minLikes) || 0,
     minReplies: Number(body?.minReplies) || 0,
     matchMode: type === 'shopping' ? 'both' : 'either',
+    accountId: body?.accountId || accounts.load().activeAccountId,
   };
 
   const res = await fetch(config.apiBase + '/api/worker/jobs', {
@@ -233,12 +246,13 @@ async function handlePasteAction(body) {
   const raw = (body?.text || '').trim();
   if (!raw) throw new Error('내용을 입력하세요.');
   const isUrl = /^https?:\/\//.test(raw);
+  const accountId = body?.accountId || accounts.load().activeAccountId;
 
   let content;
   let source;
   if (isUrl) {
     pushLog(`[대시보드] 링크에서 게시물 가져오는 중: ${raw}`);
-    const sourceText = await scrapeThreadsPost(raw);
+    const sourceText = await scrapeThreadsPost(raw, accountId);
     content = (await generateViaClaude(buildRewritePrompt(type, sourceText))).trim();
     source = '벤치 링크';
   } else {
@@ -264,7 +278,7 @@ async function handlePersonaAnalyzeAction(body) {
   if (!raw) throw new Error('계정 핸들이나 링크를 입력하세요.');
   const url = raw.startsWith('http') ? raw : `https://www.threads.net/@${raw.replace(/^@/, '')}`;
   pushLog(`[대시보드] 페르소나 분석용 페이지 여는 중: ${url}`);
-  const sourceText = await scrapeThreadsPost(url);
+  const sourceText = await scrapeThreadsPost(url, body?.accountId);
   const prompt = `아래는 어떤 쓰레드(Threads) 계정의 실제 게시물이다. 이 글의 말투(반말/존댓말, 어조, 자주 쓰는 표현, 이모지 사용 습관, 문장 길이)를 분석해서, 앞으로 다른 주제의 글을 쓸 때 그대로 따라 할 수 있게 2~3문장으로 요약해라. 설명 없이 요약 결과만 출력해라.
 
 ===게시물 시작===
@@ -285,7 +299,7 @@ async function handleLearnAccountsAction(body) {
   for (const h of handles) {
     pushLog(`[대시보드] "${h}" 글 배우는 중...`);
     try {
-      const posts = await scrapeProfilePosts(h, 3);
+      const posts = await scrapeProfilePosts(h, 3, body?.accountId);
       allPosts = allPosts.concat(posts);
     } catch (err) {
       pushLog(`[대시보드] "${h}" 배우기 실패(건너뜀): ${err.message}`);
@@ -492,12 +506,13 @@ const PAGE = () => `<!doctype html>
 
       <div class="tab-panel" data-panel="account">
         <div class="card">
-          <h1>👤 좋아요·댓글용 브라우저 로그인</h1>
-          <div class="sub">이 워커가 조종하는 전용 크롬 프로필이 지금 쓰레드에 로그인돼 있는지 확인해요(검색·좋아요·댓글·수집에 씀). 이 크롬 프로필은 1개라 계정도 1개예요.</div>
-          <div class="row"><span class="dot" id="acctDot"></span><span id="acctText">아직 확인 안 함</span></div>
+          <h1>👤 좋아요·댓글·수집용 브라우저 로그인</h1>
+          <div class="sub">이 워커가 조종하는 크롬 프로필별로 쓰레드 계정을 하나씩 연결해요(검색·좋아요·댓글·수집에 씀). 계정을 여러 개 추가할 수 있고, 한 번에 한 계정만 켜져서 동작해요(현재 켠 계정).</div>
           <div class="row"><span class="label">클로드 계정</span><span id="acctClaudeEmail">-</span></div>
-          <div class="actions">
-            <button id="checkAcctBtn">지금 확인하기</button>
+          <div id="browserAccountList" style="margin-top:8px"></div>
+          <div class="row" style="margin-top:10px">
+            <input type="text" id="newAccountLabel" placeholder="새 계정 이름(예: sub01, 육아계정)" />
+            <button id="addAccountBtn">+ 계정 추가</button>
           </div>
           <div id="acctMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;"></div>
         </div>
@@ -874,7 +889,8 @@ const PAGE = () => `<!doctype html>
     function renderChecklist(s) {
       const aiDone = !!s.claudeEmail;
       const browserDone = true; // 워커가 떠 있다는 것 자체가 크롬을 이미 찾았다는 뜻
-      const acctDone = s.threadsLoggedIn === true;
+      const activeAcctId = window.__activeAccountId || 'default';
+      const acctDone = s.threadsLoginStatus?.[activeAcctId]?.loggedIn === true;
 
       const steps = [
         { emoji: '🤖', label: 'AI 연결', sub2: '클로드', done: aiDone },
@@ -947,18 +963,7 @@ const PAGE = () => `<!doctype html>
         if (atBottom) logsEl.scrollTop = logsEl.scrollHeight;
 
         document.getElementById('acctClaudeEmail').textContent = data.status.claudeEmail || '확인 안 됨';
-        const acctDot = document.getElementById('acctDot');
-        const acctText = document.getElementById('acctText');
-        if (data.status.threadsLoggedIn === null) {
-          acctDot.className = 'dot off';
-          acctText.textContent = '아직 확인 안 함';
-        } else if (data.status.threadsLoggedIn) {
-          acctDot.className = 'dot';
-          acctText.textContent = '쓰레드 로그인됨' + (data.status.threadsCheckedAt ? ' · ' + new Date(data.status.threadsCheckedAt).toLocaleString('ko-KR') + ' 확인' : '');
-        } else {
-          acctDot.className = 'dot warn';
-          acctText.textContent = '로그인 안 됨 — 원본 수집 실행 시 뜨는 크롬 창에서 직접 로그인하세요';
-        }
+        window.__threadsLoginStatus = data.status.threadsLoginStatus || {};
       } catch {}
     }
     tick();
@@ -1618,21 +1623,83 @@ const PAGE = () => `<!doctype html>
     });
     document.querySelector('.navitem[data-tab="account"]').addEventListener('click', loadThreadsAccountList);
 
-    document.getElementById('checkAcctBtn').addEventListener('click', async () => {
-      const btn = document.getElementById('checkAcctBtn');
-      btn.disabled = true;
-      document.getElementById('acctMsg').textContent = '확인 중... (크롬 창이 잠깐 떴다 닫혀요)';
-      try {
-        const res = await fetch('/api/action/check-account', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '실패');
-        document.getElementById('acctMsg').textContent = '✅ 확인 작업이 등록됐어요 — 몇 초 안에 위 상태가 갱신돼요.';
-      } catch (err) {
-        document.getElementById('acctMsg').textContent = '❌ ' + err.message;
-      } finally {
-        btn.disabled = false;
+    // ---- 좋아요/댓글/수집용 브라우저 계정(여러 개) ----
+    async function loadBrowserAccounts() {
+      const res = await fetch('/api/browser-accounts');
+      const data = await res.json();
+      window.__activeAccountId = data.activeAccountId;
+      const st = window.__threadsLoginStatus || {};
+      const el = document.getElementById('browserAccountList');
+      el.innerHTML = data.accounts.map((a) => {
+        const login = st[a.id];
+        const isActive = a.id === data.activeAccountId;
+        const dotClass = login === undefined ? 'off' : login.loggedIn ? '' : 'warn';
+        const statusText = login === undefined ? '아직 확인 안 함' : login.loggedIn ? '로그인됨 · ' + new Date(login.checkedAt).toLocaleString('ko-KR') : '로그인 안 됨';
+        return (
+          '<div class="row" style="border:1px solid ' + (isActive ? '#6d28d9' : '#e5e5e5') + ';border-radius:8px;padding:10px;margin-bottom:6px">' +
+          '<span class="dot ' + dotClass + '"></span>' +
+          '<span style="font-weight:800;min-width:90px">' + a.label + (isActive ? ' (켜짐)' : '') + '</span>' +
+          '<span style="font-size:11px;color:#888;flex:1">' + statusText + '</span>' +
+          (isActive ? '' : '<button class="secondary" data-acct-activate="' + a.id + '">이 계정 켜기</button>') +
+          '<button class="secondary" data-acct-check="' + a.id + '">로그인 확인</button>' +
+          (a.id === 'default' ? '' : '<button class="secondary" data-acct-remove="' + a.id + '">삭제</button>') +
+          '</div>'
+        );
+      }).join('');
+    }
+    document.getElementById('addAccountBtn').addEventListener('click', async () => {
+      const label = document.getElementById('newAccountLabel').value.trim();
+      if (!label) { document.getElementById('acctMsg').textContent = '❌ 계정 이름을 입력하세요.'; return; }
+      await fetch('/api/action/browser-account-add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label }),
+      });
+      document.getElementById('newAccountLabel').value = '';
+      document.getElementById('acctMsg').textContent = '✅ 계정이 추가됐어요. "이 계정 켜기" 후 원본 수집을 돌리면 그 크롬 창에서 로그인하면 돼요.';
+      await loadBrowserAccounts();
+    });
+    document.addEventListener('click', async (e) => {
+      const actBtn = e.target.closest('[data-acct-activate]');
+      if (actBtn) {
+        await fetch('/api/action/browser-account-activate', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: actBtn.dataset.acctActivate }),
+        });
+        await loadBrowserAccounts();
+        return;
+      }
+      const chkBtn = e.target.closest('[data-acct-check]');
+      if (chkBtn) {
+        chkBtn.disabled = true;
+        document.getElementById('acctMsg').textContent = '확인 중... (크롬 창이 잠깐 떴다 닫혀요)';
+        try {
+          const res = await fetch('/api/action/check-account', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountId: chkBtn.dataset.acctCheck }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '실패');
+          document.getElementById('acctMsg').textContent = '✅ 확인 작업이 등록됐어요 — 몇 초 안에 상태가 갱신돼요.';
+        } catch (err) {
+          document.getElementById('acctMsg').textContent = '❌ ' + err.message;
+        } finally {
+          chkBtn.disabled = false;
+        }
+        return;
+      }
+      const rmBtn = e.target.closest('[data-acct-remove]');
+      if (rmBtn) {
+        if (!confirm('이 계정을 삭제할까요? (로그인 세션도 같이 사라져요)')) return;
+        await fetch('/api/action/browser-account-remove', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: rmBtn.dataset.acctRemove }),
+        });
+        await loadBrowserAccounts();
       }
     });
+    document.querySelector('.navitem[data-tab="account"]').addEventListener('click', loadBrowserAccounts);
+    loadBrowserAccounts();
 
     document.getElementById('shutdownBtn').addEventListener('click', async () => {
       if (!confirm('워커를 종료할까요? 콘솔 창도 같이 닫혀요.')) return;
@@ -1964,6 +2031,59 @@ function startDashboard() {
       });
       return;
     }
+    if (req.url === '/api/browser-accounts') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(accounts.load()));
+      return;
+    }
+    if (req.url === '/api/action/browser-account-add' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const data = accounts.addAccount(parsed.label);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/browser-account-remove' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const data = accounts.removeAccount(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/browser-account-activate' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const data = accounts.setActive(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
     if (req.url === '/api/threads-accounts-list') {
       handleListThreadsAccounts()
         .then((data) => {
@@ -1993,15 +2113,20 @@ function startDashboard() {
       return;
     }
     if (req.url === '/api/action/check-account' && req.method === 'POST') {
-      handleCheckAccountAction()
-        .then((job) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, job }));
-        })
-        .catch((err) => {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message }));
-        });
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        const parsed = JSON.parse(body || '{}');
+        handleCheckAccountAction(parsed.accountId)
+          .then((job) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, job }));
+          })
+          .catch((err) => {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          });
+      });
       return;
     }
     if (req.url === '/api/action/shutdown' && req.method === 'POST') {
@@ -2037,4 +2162,4 @@ function startDashboard() {
   return { setStatus };
 }
 
-module.exports = { startDashboard, setStatus, pushLog, handleManualPostAction };
+module.exports = { startDashboard, setStatus, pushLog, handleManualPostAction, setThreadsLoginStatus };

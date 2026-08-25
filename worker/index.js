@@ -1,7 +1,7 @@
 const { loadConfig } = require('./config');
 const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
 const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
-const { startDashboard, setStatus, handleManualPostAction } = require('./dashboard');
+const { startDashboard, setStatus, handleManualPostAction, setThreadsLoginStatus } = require('./dashboard');
 const { addMaterials } = require('./materials');
 const { dueDrafts, removeDraft } = require('./draftQueue');
 
@@ -35,8 +35,9 @@ async function claimAndRun(config, job) {
         console.log(`[글감] "${job.input.saveMaterialsAs}" 창고에 ${output.items.length}개 저장 시도(중복 제외)`);
       }
     } else if (job.type === 'check_threads_login') {
-      const loggedIn = await checkLoginStatus();
-      setStatus({ threadsLoggedIn: loggedIn, threadsCheckedAt: new Date().toISOString() });
+      const accountId = job.input?.accountId;
+      const loggedIn = await checkLoginStatus(accountId);
+      setThreadsLoginStatus(accountId, loggedIn);
       output = { loggedIn };
     } else {
       throw new Error(`알 수 없는 작업 타입: ${job.type}`);

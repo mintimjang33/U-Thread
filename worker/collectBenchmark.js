@@ -1,13 +1,11 @@
 const puppeteer = require('puppeteer-core');
-const path = require('path');
-const os = require('os');
 const { generateViaClaude } = require('./generate');
+const accounts = require('./accounts');
 
 const CHROME_PATHS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 ];
-const PROFILE_DIR = path.join(os.homedir(), '.u-thread-worker', 'chrome-profile');
 
 // ⚠️ 실제 로그인된 쓰레드 세션으로 검증되지 않음. 최초 실행은 반드시 headless:false로 눈으로 확인할 것.
 // 쓰레드 DOM 구조가 바뀌면 여기 셀렉터만 고치면 된다. 특히 replyButton/commentInput/submitButton은
@@ -119,6 +117,30 @@ async function safeEvaluate(page, fn, arg, retries = 2) {
 // "워커 종료" 버튼이 process.exit()만 호출해서는 이 창이 안 닫힌다. 종료 시 같이
 // 닫을 수 있게 마지막으로 띄운 브라우저 인스턴스를 모듈 스코프에 보관해둔다.
 let currentBrowser = null;
+let currentBrowserAccountId = null; // 지금 열려있는 크롬이 어느 계정 프로필인지 — 계정이 여러 개일 때 헷갈리지 않게.
+
+// 여러 계정을 동시에 띄우면 헷갈리고 무거워지므로, 한 번에 계정 하나의 크롬만 열어둔다.
+// 요청한 계정과 지금 열려있는 계정이 다르면 기존 걸 닫고 새로 연다.
+async function getOrLaunchBrowser(accountId) {
+  if (currentBrowser && currentBrowserAccountId === accountId) {
+    return { browser: currentBrowser, reusingExisting: true };
+  }
+  if (currentBrowser) {
+    console.log(`[워커] 다른 계정("${currentBrowserAccountId}") 크롬이 열려있어 닫고 "${accountId}" 계정으로 새로 엽니다.`);
+    await closeBrowser();
+  }
+  const executablePath = findChrome();
+  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: false,
+    userDataDir: accounts.profileDirFor(accountId),
+    args: ['--no-first-run', '--no-default-browser-check'],
+  });
+  currentBrowser = browser;
+  currentBrowserAccountId = accountId;
+  return { browser, reusingExisting: false };
+}
 
 // 워커(node)가 재시작되면 이전 실행이 띄운 크롬에 대한 메모리 참조(currentBrowser)는
 // 사라지지만, 실제 크롬 창(OS 프로세스)은 그대로 남아있을 수 있다. 이 경우 currentBrowser로는
@@ -154,6 +176,7 @@ async function closeBrowser() {
   if (currentBrowser) {
     const browser = currentBrowser;
     currentBrowser = null;
+    currentBrowserAccountId = null;
     const proc = browser.process ? browser.process() : null;
 
     try {
@@ -188,19 +211,9 @@ async function checkThreadsLogin(page) {
 // 사이드바 "계정" 탭에서 쓰는 가벼운 연결 확인 — collectBenchmark()처럼 5분씩 로그인 대기하지 않고
 // 지금 로그인 상태인지만 빠르게 보고 끝낸다. 이미 떠 있는 브라우저가 있으면 그걸 재사용하고,
 // 없으면 새로 띄웠다가 확인 후 닫는다(백그라운드 상태 확인용 창을 계속 남겨두지 않기 위함).
-async function checkLoginStatus() {
-  const executablePath = findChrome();
-  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
-
-  const reusingExisting = !!currentBrowser;
-  const browser =
-    currentBrowser ||
-    (currentBrowser = await puppeteer.launch({
-      executablePath,
-      headless: false,
-      userDataDir: PROFILE_DIR,
-      args: ['--no-first-run', '--no-default-browser-check'],
-    }));
+async function checkLoginStatus(accountId) {
+  accountId = accountId || accounts.load().activeAccountId;
+  const { browser, reusingExisting } = await getOrLaunchBrowser(accountId);
 
   const page = await browser.newPage();
   try {
@@ -216,19 +229,9 @@ async function checkLoginStatus() {
 }
 
 // "직접 소싱(커스텀)" 탭의 링크 붙여넣기용 — 쓰레드 게시물 URL 하나를 열어서 본문 텍스트만 뽑아온다.
-async function scrapeThreadsPost(url) {
-  const executablePath = findChrome();
-  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
-
-  const reusingExisting = !!currentBrowser;
-  const browser =
-    currentBrowser ||
-    (currentBrowser = await puppeteer.launch({
-      executablePath,
-      headless: false,
-      userDataDir: PROFILE_DIR,
-      args: ['--no-first-run', '--no-default-browser-check'],
-    }));
+async function scrapeThreadsPost(url, accountId) {
+  accountId = accountId || accounts.load().activeAccountId;
+  const { browser, reusingExisting } = await getOrLaunchBrowser(accountId);
 
   const page = await browser.newPage();
   try {
@@ -249,20 +252,10 @@ async function scrapeThreadsPost(url) {
 }
 
 // "채널 복제" 탭용 — 특정 계정의 최근 게시물 여러 개를 텍스트로 모아온다(말투/구조 학습 재료).
-async function scrapeProfilePosts(handleOrUrl, limit = 5) {
-  const executablePath = findChrome();
-  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
-
+async function scrapeProfilePosts(handleOrUrl, limit = 5, accountId) {
+  accountId = accountId || accounts.load().activeAccountId;
   const url = handleOrUrl.startsWith('http') ? handleOrUrl : `https://www.threads.net/@${handleOrUrl.replace(/^@/, '')}`;
-  const reusingExisting = !!currentBrowser;
-  const browser =
-    currentBrowser ||
-    (currentBrowser = await puppeteer.launch({
-      executablePath,
-      headless: false,
-      userDataDir: PROFILE_DIR,
-      args: ['--no-first-run', '--no-default-browser-check'],
-    }));
+  const { browser, reusingExisting } = await getOrLaunchBrowser(accountId);
 
   const page = await browser.newPage();
   try {
@@ -291,16 +284,8 @@ async function scrapeProfilePosts(handleOrUrl, limit = 5) {
 }
 
 async function collectBenchmark(input) {
-  const executablePath = findChrome();
-  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
-
-  const browser = await puppeteer.launch({
-    executablePath,
-    headless: false,
-    userDataDir: PROFILE_DIR,
-    args: ['--no-first-run', '--no-default-browser-check'],
-  });
-  currentBrowser = browser;
+  const accountId = input.accountId || accounts.load().activeAccountId;
+  const { browser } = await getOrLaunchBrowser(accountId);
 
   try {
     const page = await browser.newPage();
