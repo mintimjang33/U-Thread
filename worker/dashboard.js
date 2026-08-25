@@ -31,16 +31,22 @@ function hookConsole() {
   };
 }
 
+// 키워드를 안 넣고 "일상글 올리기" 탭에서 바로 수집을 누를 때 쓰는 기본 후보 — 실제로 인기 있던
+// 검색어 위주(현황/ai-worker 페이지의 DEFAULT_KEYWORDS와 동일 계열).
+const FALLBACK_KEYWORDS = ['꿀템', '살림꿀팁', '자취템', '다이소템', '뷰티템'];
+
 async function handleCollectAction(body) {
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
-  const keyword = (body?.keyword || '').trim();
-  if (!keyword) throw new Error('키워드를 입력하세요.');
+  const keyword = (body?.keyword || '').trim() || FALLBACK_KEYWORDS[Math.floor(Math.random() * FALLBACK_KEYWORDS.length)];
+  const minutes = Number(body?.minutes) || 10;
+  // 시간(분) 단위를 실제 스크롤 횟수로 환산 — 정확한 시간제한은 아니고 대략적인 비례치.
+  const maxScrolls = Math.max(3, Math.min(20, Math.round(minutes / 2)));
 
   const res = await fetch(config.apiBase + '/api/worker/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
-    body: JSON.stringify({ type: 'collect_benchmark', input: { keyword, maxScrolls: 5 } }),
+    body: JSON.stringify({ type: 'collect_benchmark', input: { keyword, maxScrolls } }),
   });
   if (!res.ok) throw new Error(`작업 생성 실패 (${res.status})`);
   const { job } = await res.json();
@@ -86,7 +92,7 @@ const NAV_SECTIONS = [
     label: '오늘',
     items: [
       { id: 'status', label: '현황', ready: true },
-      { id: 'daily', label: '일상글 올리기', ready: false },
+      { id: 'daily', label: '일상글 올리기', ready: true },
       { id: 'shopping', label: '쇼핑글 올리기', ready: false },
       { id: 'schedule', label: '예약', ready: false },
       { id: 'custom', label: '직접 소싱(커스텀)', ready: false },
@@ -249,6 +255,65 @@ const PAGE = () => `<!doctype html>
         </div>
       </div>
 
+      <div class="tab-panel" data-panel="daily">
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1>📝 일상글 올리기</h1>
+            <span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px">예열</span>
+          </div>
+          <div class="sub">계정 조회수를 띄우는 게 목적입니다. 좋아요·댓글이 많이 붙은 원본을 골라 표현만 바꿔 올립니다.</div>
+
+          <div class="row" style="margin-top:10px"><span class="label">원본 수집</span><span id="dailyBenchInfo">키워드를 입력하거나 비워두면 자동으로 하나 골라요.</span></div>
+          <div class="row">
+            <input type="text" id="dailyKeyword" placeholder="예: 다이소 꿀템 (비워도 됨)" />
+            <select id="dailyDuration" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="3">3분</option>
+              <option value="5">5분</option>
+              <option value="10" selected>10분</option>
+              <option value="20">20분</option>
+              <option value="30">30분</option>
+            </select>
+          </div>
+          <div class="actions">
+            <button id="dailyCollectBtn">📥 원본 수집</button>
+            <button class="secondary" data-soon="원본 수집 중단">■ 원본 수집 중단</button>
+            <button class="secondary" data-soon="창고 정리">🗑 창고 정리</button>
+            <button class="secondary" id="dailyKeywordBankBtn">🔑 검색 키워드 관리</button>
+          </div>
+          <div class="sub" style="margin-top:8px">글쓰기는 아직 준비 중이에요 — 지금은 원본 수집까지만 실제로 동작해요.</div>
+
+          <div class="actions" style="margin-top:14px">
+            <button data-soon="일상글 바로쓰기(생성+게시)" style="background:#f59e0b">🔶 일상글 바로쓰기</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#888;margin-top:10px">
+            <input type="checkbox" id="dailyAutoToggle" /> 🔄 일상글 자동 올리기 — 2시간마다 전 계정을 한 바퀴(게시 엔진 완성 후 활성화돼요)
+          </label>
+          <div id="dailyMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:15px">✏️ 내가 직접 써서 올리기</h1>
+          <div class="sub">글감 AI를 하나도 안 거칩니다. 쓴 글이 그대로 올라갑니다.</div>
+          <textarea id="manualPostText" rows="5" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="올릴 글을 그대로 쓰세요. 줄바꿈도 쓴 그대로 올라갑니다."></textarea>
+          <div class="actions">
+            <button class="secondary" data-soon="사진 붙이기">📷 사진 붙이기</button>
+            <button class="secondary" data-soon="변형하기">🎭 변형하기</button>
+            <button class="secondary" data-soon="되돌리기">↩ 되돌리기</button>
+            <button data-soon="올리기(실제 게시)">올리기</button>
+          </div>
+          <div class="sub">올리기는 아직 준비 중이에요 — 실제 쓰레드 게시 기능이 완성되면 여기서 바로 올라가게 됩니다.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">벤치 링크로 바로 만들기</h1>
+          <div class="row">
+            <input type="text" id="benchUrl" placeholder="벤치 글 URL 붙여넣기 (threads.com/@.../post/...)" />
+            <button data-soon="벤치 링크 변환" style="background:#f59e0b">변환</button>
+          </div>
+          <div class="sub">마음에 드는 남의 일상글 링크를 넣으면 표현만 바꿔 내 글로 만드는 기능이에요 — 아직 준비 중이에요.</div>
+        </div>
+      </div>
+
       ${NAV_SECTIONS.flatMap((s) => s.items)
         .filter((it) => !it.ready)
         .map(
@@ -341,6 +406,7 @@ const PAGE = () => `<!doctype html>
         const res = await fetch('/api/status');
         const data = await res.json();
         renderChecklist(data.status);
+        window.__apiBase = data.status.apiBase;
         document.getElementById('dot').className = 'dot' + (data.status.state === 'running' ? '' : ' off');
         document.getElementById('stateText').textContent = data.status.state === 'running' ? '온라인 — 정상 작동 중' : '연결 대기 중';
         document.getElementById('claudeEmail').textContent = data.status.claudeEmail || '확인 안 됨';
@@ -394,6 +460,54 @@ const PAGE = () => `<!doctype html>
       } finally {
         btn.disabled = false;
       }
+    });
+
+    // 아직 안 만든 기능 버튼(data-soon="라벨") 공용 처리 — 조용히 아무것도 안 하는 대신
+    // 뭐가 준비 중인지 화면에 바로 보여준다(가짜로 되는 척하지 않기 위함).
+    let toastTimer = null;
+    function showToast(text) {
+      let el = document.getElementById('toast');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'toast';
+        el.style.cssText = 'position:fixed;bottom:20px;right:24px;background:#1a1a1a;color:#fff;font-size:12px;font-weight:700;padding:10px 16px;border-radius:8px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+        document.body.appendChild(el);
+      }
+      el.textContent = text;
+      el.style.display = 'block';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
+    }
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-soon]');
+      if (btn) showToast('🚧 "' + btn.dataset.soon + '" 아직 준비 중이에요.');
+    });
+
+    document.getElementById('dailyCollectBtn').addEventListener('click', async () => {
+      const keyword = document.getElementById('dailyKeyword').value.trim();
+      const minutes = document.getElementById('dailyDuration').value;
+      const btn = document.getElementById('dailyCollectBtn');
+      btn.disabled = true;
+      document.getElementById('dailyMsg').textContent = '작업 등록 중...';
+      try {
+        const res = await fetch('/api/action/collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword, minutes }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        document.getElementById('dailyMsg').textContent = '✅ 작업 등록됨 — [현황] 탭 로그에서 진행상황을 볼 수 있어요.';
+      } catch (err) {
+        document.getElementById('dailyMsg').textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('dailyKeywordBankBtn').addEventListener('click', () => {
+      const base = window.__apiBase || 'https://u-thread.vercel.app';
+      window.open(base + '/dashboard/ai-worker', '_blank');
     });
 
     document.getElementById('checkAcctBtn').addEventListener('click', async () => {
