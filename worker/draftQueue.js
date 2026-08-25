@@ -53,4 +53,8 @@ function dueDrafts() {
   return loadQueue().filter((d) => d.scheduledAt && new Date(d.scheduledAt).getTime() <= now);
 }
 
-module.exports = { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, dueDrafts };
+function clearAll() {
+  saveQueue([]);
+}
+
+module.exports = { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, dueDrafts, clearAll };

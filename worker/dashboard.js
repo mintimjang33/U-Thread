@@ -7,7 +7,7 @@ const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts } = require('./collectBenchmark');
 const accounts = require('./accounts');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
-const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft } = require('./draftQueue');
+const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearAll } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
 const persona = require('./persona');
 const channelClone = require('./channelClone');
@@ -17,9 +17,12 @@ const channelClone = require('./channelClone');
 const CUSTOM_KEYWORDS_PATH = path.join(os.homedir(), '.u-thread-worker', 'custom-keywords.json');
 function loadCustomKeywords() {
   try {
-    return JSON.parse(fs.readFileSync(CUSTOM_KEYWORDS_PATH, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(CUSTOM_KEYWORDS_PATH, 'utf-8'));
+    if (!data.dailyGroups) data.dailyGroups = [];
+    if (!data.shoppingGroups) data.shoppingGroups = [];
+    return data;
   } catch {
-    return { daily: [], shopping: [] };
+    return { daily: [], shopping: [], dailyGroups: [], shoppingGroups: [] };
   }
 }
 function saveCustomKeywords(data) {
@@ -271,6 +274,36 @@ async function handleQueuePublishAction(id) {
   const result = await handleManualPostAction({ text: item.content });
   removeDraft(id);
   return result;
+}
+
+async function handleQueueClearAllAction() {
+  const count = loadQueue().length;
+  clearAll();
+  pushLog(`[대시보드] 검수 대기 ${count}개 전부 비움`);
+  return { cleared: count };
+}
+
+async function handleQueueRewriteAllAction() {
+  const items = loadQueue();
+  if (!items.length) throw new Error('비어있어요 — 다시 쓸 게 없습니다.');
+  const dailyCount = items.filter((d) => d.type === 'daily').length;
+  const shoppingCount = items.filter((d) => d.type === 'shopping').length;
+  clearAll();
+
+  const drafts = [];
+  for (const [type, count] of [['daily', dailyCount], ['shopping', shoppingCount]]) {
+    if (!count) continue;
+    const materials = takeUnusedMaterials(type, count);
+    for (const m of materials) {
+      const content = (await generateViaClaude(buildRewritePrompt(type, m.content))).trim();
+      drafts.push(addDraft({ type, content, source: '전체 다시쓰기' }));
+    }
+    if (materials.length < count) {
+      pushLog(`[대시보드] ${type} 글감이 부족해서 ${count}개 중 ${materials.length}개만 다시 씀 — 원본 수집을 더 해주세요.`);
+    }
+  }
+  pushLog(`[대시보드] 검수 대기 ${items.length}개를 비우고 ${drafts.length}개로 다시 씀`);
+  return drafts;
 }
 
 async function handlePersonaAnalyzeAction(body) {
@@ -646,7 +679,14 @@ const PAGE = () => `<!doctype html>
               <h1 style="font-size:14px">📗 일상글 소싱</h1>
               <div class="row"><input type="text" id="customKwDaily" placeholder="예: 자취 꿀템" /><button class="secondary" id="addKwDailyBtn">추가</button></div>
               <div id="customKwDailyList" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
-              <div class="actions">
+              <div class="sub" style="margin-top:6px">📁 키워드 그룹(켜둔 그룹의 검색어도 소싱 때 같이 랜덤으로 뽑혀요)</div>
+              <div id="customKwGroupsDaily" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
+              <div class="row">
+                <input type="text" id="newKwGroupNameDaily" placeholder="그룹 이름(예: 자취템 시리즈)" style="max-width:140px" />
+                <input type="text" id="newKwGroupWordsDaily" placeholder="검색어(쉼표로 구분)" />
+                <button class="secondary" id="addKwGroupDailyBtn">그룹 추가</button>
+              </div>
+              <div class="actions" style="margin-top:8px">
                 <button id="customCollectDailyBtn">📥 내 검색어로 일상글 소싱</button>
               </div>
               <div class="sub" id="customMaterialDailyInfo" style="margin-top:6px">글감 창고: 0개</div>
@@ -658,7 +698,14 @@ const PAGE = () => `<!doctype html>
               <h1 style="font-size:14px">🛒 쇼핑글 소싱</h1>
               <div class="row"><input type="text" id="customKwShopping" placeholder="예: 다이소 신상" /><button class="secondary" id="addKwShoppingBtn">추가</button></div>
               <div id="customKwShoppingList" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
-              <div class="actions">
+              <div class="sub" style="margin-top:6px">📁 키워드 그룹(켜둔 그룹의 검색어도 소싱 때 같이 랜덤으로 뽑혀요)</div>
+              <div id="customKwGroupsShopping" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
+              <div class="row">
+                <input type="text" id="newKwGroupNameShopping" placeholder="그룹 이름(예: 다이소 시리즈)" style="max-width:140px" />
+                <input type="text" id="newKwGroupWordsShopping" placeholder="검색어(쉼표로 구분)" />
+                <button class="secondary" id="addKwGroupShoppingBtn">그룹 추가</button>
+              </div>
+              <div class="actions" style="margin-top:8px">
                 <button id="customCollectShoppingBtn" style="background:#2563eb">📥 내 검색어로 쇼핑글 소싱</button>
               </div>
               <div class="sub" id="customMaterialShoppingInfo" style="margin-top:6px">글감 창고: 0개</div>
@@ -697,13 +744,16 @@ const PAGE = () => `<!doctype html>
         </div>
 
         <div class="card" style="max-width:960px">
-          <h1 style="font-size:14px">📇 키워드 그룹</h1>
-          <div class="sub">🚧 아직 준비 중이에요 — 지금은 위 "내 검색어" 목록만 쓸 수 있어요.</div>
-        </div>
-
-        <div class="card" style="max-width:960px">
-          <h1 style="font-size:14px">✂️ 글쓰기 조건(원본 하나당 몇 개)</h1>
-          <div class="sub">🚧 아직 준비 중이에요 — 지금은 [바로쓰기]를 누른 횟수만큼 하나씩 만들어져요.</div>
+          <h1 style="font-size:14px">✂️ 글쓰기 조건(바로쓰기 누를 때 몇 개씩 만들지)</h1>
+          <div class="sub">원본 글감 하나당 이 개수만큼 [바로쓰기]가 한 번에 만들어요(글감이 부족하면 있는 만큼만).</div>
+          <div class="row">
+            <select id="customWriteCount" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="1" selected>1개씩</option>
+              <option value="2">2개씩</option>
+              <option value="3">3개씩</option>
+              <option value="5">5개씩</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -714,7 +764,12 @@ const PAGE = () => `<!doctype html>
             <button class="secondary" id="reviewRefreshBtn">🔄 새로고침</button>
           </div>
           <div class="sub">일상글 바로쓰기·직접소싱·붙여넣기로 담긴 글이 여기 쌓여요. 실제로 게시하려면 [지금 게시]를 누르세요.</div>
-          <div id="reviewList"></div>
+          <div class="actions">
+            <button class="secondary" id="reviewRewriteAllBtn">🔄 전체 다시쓰기</button>
+            <button class="secondary" id="reviewClearAllBtn" style="color:#dc2626;border-color:#fca5a5">🗑 대기 비우기</button>
+          </div>
+          <div id="reviewBulkMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
+          <div id="reviewList" style="margin-top:8px"></div>
         </div>
       </div>
 
@@ -1147,8 +1202,61 @@ const PAGE = () => `<!doctype html>
       const data = await res.json();
       renderKwList('customKwDailyList', data.daily || [], 'daily');
       renderKwList('customKwShoppingList', data.shopping || [], 'shopping');
+      renderKwGroups('customKwGroupsDaily', data.dailyGroups || [], 'daily');
+      renderKwGroups('customKwGroupsShopping', data.shoppingGroups || [], 'shopping');
       return data;
     }
+    function renderKwGroups(elId, groups, type) {
+      const el = document.getElementById(elId);
+      if (!groups.length) { el.textContent = '아직 없습니다.'; return; }
+      el.innerHTML = groups.map((g) => (
+        '<div style="display:flex;align-items:center;gap:6px;padding:3px 0">' +
+        '<label style="display:flex;align-items:center;gap:4px;cursor:pointer">' +
+        '<input type="checkbox" data-toggle-kwgroup="' + g.id + '" data-kwgroup-type="' + type + '"' + (g.enabled ? ' checked' : '') + ' />' +
+        '<b>' + g.name + '</b></label>' +
+        '<span style="color:#aaa">(' + g.keywords.length + '개: ' + g.keywords.join(', ') + ')</span>' +
+        '<span data-delete-kwgroup="' + g.id + '" data-kwgroup-type="' + type + '" style="cursor:pointer;color:#a78bfa;margin-left:auto">×</span>' +
+        '</div>'
+      )).join('');
+    }
+    async function addKeywordGroup(type) {
+      const nameEl = document.getElementById(type === 'daily' ? 'newKwGroupNameDaily' : 'newKwGroupNameShopping');
+      const wordsEl = document.getElementById(type === 'daily' ? 'newKwGroupWordsDaily' : 'newKwGroupWordsShopping');
+      const name = nameEl.value.trim();
+      const keywords = wordsEl.value.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!name || !keywords.length) { document.getElementById('customMsg').textContent = '❌ 그룹 이름과 검색어를 입력하세요.'; return; }
+      await fetch('/api/action/add-keyword-group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, name, keywords }),
+      });
+      nameEl.value = '';
+      wordsEl.value = '';
+      await loadCustomKeywords();
+    }
+    document.getElementById('addKwGroupDailyBtn').addEventListener('click', () => addKeywordGroup('daily'));
+    document.getElementById('addKwGroupShoppingBtn').addEventListener('click', () => addKeywordGroup('shopping'));
+    document.addEventListener('change', async (e) => {
+      const el = e.target.closest('[data-toggle-kwgroup]');
+      if (!el) return;
+      await fetch('/api/action/toggle-keyword-group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: el.dataset.kwgroupType, groupId: el.dataset.toggleKwgroup }),
+      });
+      await loadCustomKeywords();
+    });
+    document.addEventListener('click', async (e) => {
+      const el = e.target.closest('[data-delete-kwgroup]');
+      if (!el) return;
+      if (!confirm('그룹을 삭제할까요?')) return;
+      await fetch('/api/action/delete-keyword-group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: el.dataset.kwgroupType, groupId: el.dataset.deleteKwgroup }),
+      });
+      await loadCustomKeywords();
+    });
     function renderKwList(elId, list, type) {
       const el = document.getElementById(elId);
       if (!list.length) { el.textContent = '아직 없습니다.'; return; }
@@ -1193,7 +1301,8 @@ const PAGE = () => `<!doctype html>
 
     async function runCustomCollect(type) {
       const data = await loadCustomKeywords();
-      const list = data[type] || [];
+      const groupWords = (data[type + 'Groups'] || []).filter((g) => g.enabled).flatMap((g) => g.keywords);
+      const list = [...new Set([...(data[type] || []), ...groupWords])];
       if (!list.length) { document.getElementById('customMsg').textContent = '❌ 먼저 검색어를 추가하세요.'; return; }
       const keyword = pickRandom(list);
       const minutes = document.getElementById('customDuration').value;
@@ -1219,16 +1328,17 @@ const PAGE = () => `<!doctype html>
     async function runCustomWrite(type) {
       const btn = document.getElementById(type === 'daily' ? 'customWriteDailyBtn' : 'customWriteShoppingBtn');
       btn.disabled = true;
-      document.getElementById('customMsg').textContent = '글 쓰는 중...(클로드 호출이라 몇 초 걸려요)';
+      const count = document.getElementById('customWriteCount').value;
+      document.getElementById('customMsg').textContent = count + '개 쓰는 중...(클로드 호출이라 몇 초씩 걸려요)';
       try {
         const res = await fetch('/api/action/custom-write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, count: 1 }),
+          body: JSON.stringify({ type, count }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
-        document.getElementById('customMsg').textContent = '✅ [검수] 탭에 새 글이 추가됐어요.';
+        document.getElementById('customMsg').textContent = '✅ [검수] 탭에 ' + data.drafts.length + '개 추가됐어요.';
       } catch (err) {
         document.getElementById('customMsg').textContent = '❌ ' + err.message;
       } finally {
@@ -1279,6 +1389,30 @@ const PAGE = () => `<!doctype html>
       )).join('');
     }
     document.getElementById('reviewRefreshBtn').addEventListener('click', loadReviewQueue);
+    document.getElementById('reviewClearAllBtn').addEventListener('click', async () => {
+      if (!confirm('검수 대기 중인 글을 전부 지울까요?')) return;
+      const res = await fetch('/api/action/queue-clear-all', { method: 'POST' });
+      const data = await res.json();
+      document.getElementById('reviewBulkMsg').textContent = res.ok ? '✅ ' + data.cleared + '개 비웠어요.' : '❌ ' + data.error;
+      await loadReviewQueue();
+    });
+    document.getElementById('reviewRewriteAllBtn').addEventListener('click', async () => {
+      if (!confirm('지금 대기 중인 글을 버리고 같은 개수만큼 글감에서 새로 쓸까요?')) return;
+      const btn = document.getElementById('reviewRewriteAllBtn');
+      btn.disabled = true;
+      document.getElementById('reviewBulkMsg').textContent = '다시 쓰는 중...';
+      try {
+        const res = await fetch('/api/action/queue-rewrite-all', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        document.getElementById('reviewBulkMsg').textContent = '✅ ' + data.drafts.length + '개로 다시 썼어요.';
+        await loadReviewQueue();
+      } catch (err) {
+        document.getElementById('reviewBulkMsg').textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
     document.addEventListener('click', async (e) => {
       const pubBtn = e.target.closest('[data-publish-id]');
       if (pubBtn) {
@@ -1530,7 +1664,7 @@ const PAGE = () => `<!doctype html>
       const res = await fetch('/api/channel-clone');
       const data = await res.json();
       document.getElementById('cloneSummary').textContent = data.summary
-        ? '배운 계정: ' + data.accounts.join(', ') + '\n\n' + data.summary
+        ? '배운 계정: ' + data.accounts.join(', ') + '\\n\\n' + data.summary
         : '아직 배운 계정이 없어요.';
     }
     document.getElementById('cloneLearnBtn').addEventListener('click', async () => {
@@ -1849,6 +1983,71 @@ function startDashboard() {
       res.end(JSON.stringify(loadCustomKeywords()));
       return;
     }
+    if (req.url === '/api/action/add-keyword-group' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const type = parsed?.type === 'shopping' ? 'shopping' : 'daily';
+          const name = (parsed?.name || '').trim();
+          const keywords = Array.isArray(parsed?.keywords) ? parsed.keywords.filter((k) => typeof k === 'string' && k.trim()) : [];
+          if (!name || !keywords.length) throw new Error('그룹 이름과 검색어가 필요합니다.');
+          const data = loadCustomKeywords();
+          const groupsKey = type + 'Groups';
+          const group = { id: 'kwg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, keywords, enabled: true };
+          data[groupsKey] = [...(data[groupsKey] || []), group];
+          saveCustomKeywords(data);
+          pushLog(`[대시보드] 키워드 그룹 "${name}" 추가(${type === 'shopping' ? '쇼핑글' : '일상글'}, ${keywords.length}개)`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/toggle-keyword-group' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const type = parsed?.type === 'shopping' ? 'shopping' : 'daily';
+          const groupsKey = type + 'Groups';
+          const data = loadCustomKeywords();
+          data[groupsKey] = (data[groupsKey] || []).map((g) => (g.id === parsed?.groupId ? { ...g, enabled: !g.enabled } : g));
+          saveCustomKeywords(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/delete-keyword-group' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const type = parsed?.type === 'shopping' ? 'shopping' : 'daily';
+          const groupsKey = type + 'Groups';
+          const data = loadCustomKeywords();
+          data[groupsKey] = (data[groupsKey] || []).filter((g) => g.id !== parsed?.groupId);
+          saveCustomKeywords(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
     if (req.url === '/api/queue') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ items: loadQueue() }));
@@ -2029,6 +2228,30 @@ function startDashboard() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+      return;
+    }
+    if (req.url === '/api/action/queue-clear-all' && req.method === 'POST') {
+      handleQueueClearAllAction()
+        .then((data) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+      return;
+    }
+    if (req.url === '/api/action/queue-rewrite-all' && req.method === 'POST') {
+      handleQueueRewriteAllAction()
+        .then((drafts) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, drafts }));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
       return;
     }
     if (req.url === '/api/browser-accounts') {
