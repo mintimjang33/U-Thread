@@ -266,7 +266,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'status', label: '현황', ready: true },
       { id: 'daily', label: '일상글 올리기', ready: true },
-      { id: 'shopping', label: '쇼핑글 올리기', ready: false },
+      { id: 'shopping', label: '쇼핑글 올리기', ready: true },
       { id: 'schedule', label: '예약', ready: false },
       { id: 'custom', label: '직접 소싱(커스텀)', ready: true },
       { id: 'clone', label: '채널 복제', ready: false },
@@ -493,6 +493,41 @@ const PAGE = () => `<!doctype html>
           </div>
           <div class="sub">마음에 드는 남의 일상글 링크를 넣으면 표현만 바꿔 [검수] 탭에 담아요. 크롬 창이 잠깐 그 글을 열어봅니다.</div>
           <div id="benchMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="shopping">
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1>🛍️ 쇼핑글 올리기</h1>
+            <span style="background:#dbeafe;color:#1e40af;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px">파는 글</span>
+          </div>
+          <div class="sub">댓글·공유가 많이 붙은 원본을 골라 내 쿠팡 링크로 바꿔 답니다. 링크는 [직접 소싱] 탭에 붙여넣거나, 검수창에서 직접 달아주세요(자동 상품 검색은 아직 준비 중).</div>
+
+          <div class="row" style="margin-top:10px">
+            <input type="text" id="shoppingKeyword" placeholder="예: 다이소 신상 (비워도 됨)" />
+            <select id="shoppingDuration" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="3">3분</option>
+              <option value="5">5분</option>
+              <option value="10" selected>10분</option>
+              <option value="20">20분</option>
+            </select>
+          </div>
+          <div class="actions">
+            <button id="shoppingCollectBtn" style="background:#2563eb">📥 원본 수집</button>
+            <button class="secondary" id="shoppingKeywordBankBtn">🔑 검색 키워드 관리</button>
+          </div>
+          <div id="shoppingMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:15px">✏️ 내가 직접 써서 올리기</h1>
+          <div class="sub">쿠팡 링크는 본문엔 안 넣고 첫 댓글로 자동으로 붙어요(광고 티 안 나게). 상품 링크는 유쓰레드 웹의 쿠팡 파트너스 연동에서 가져와요 — 지금은 본문만 이 칸에서 바로 올릴 수 있어요.</div>
+          <textarea id="shoppingPostText" rows="5" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="쿠팡 상품 소개 글을 쓰세요."></textarea>
+          <div class="actions">
+            <button id="shoppingPostBtn" style="background:#2563eb">올리기</button>
+          </div>
+          <div id="shoppingPostMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
         </div>
       </div>
 
@@ -817,6 +852,56 @@ const PAGE = () => `<!doctype html>
         if (!res.ok) throw new Error(data.error || '실패');
         msgEl.textContent = '✅ [검수] 탭에 담겼어요.';
         document.getElementById('benchUrl').value = '';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ---- 쇼핑글 올리기 ----
+    document.getElementById('shoppingCollectBtn').addEventListener('click', async () => {
+      const keyword = document.getElementById('shoppingKeyword').value.trim();
+      const minutes = document.getElementById('shoppingDuration').value;
+      const btn = document.getElementById('shoppingCollectBtn');
+      btn.disabled = true;
+      document.getElementById('shoppingMsg').textContent = '작업 등록 중...';
+      try {
+        const res = await fetch('/api/action/collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword, minutes }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        document.getElementById('shoppingMsg').textContent = '✅ 작업 등록됨 — [현황] 탭 로그에서 진행상황을 볼 수 있어요.';
+      } catch (err) {
+        document.getElementById('shoppingMsg').textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    document.getElementById('shoppingKeywordBankBtn').addEventListener('click', () => {
+      const base = window.__apiBase || 'https://u-thread.vercel.app';
+      window.open(base + '/dashboard/ai-worker', '_blank');
+    });
+    document.getElementById('shoppingPostBtn').addEventListener('click', async () => {
+      const text = document.getElementById('shoppingPostText').value.trim();
+      const msgEl = document.getElementById('shoppingPostMsg');
+      if (!text) { msgEl.textContent = '❌ 올릴 글을 입력하세요.'; return; }
+      const btn = document.getElementById('shoppingPostBtn');
+      btn.disabled = true;
+      msgEl.textContent = '게시 중...';
+      try {
+        const res = await fetch('/api/action/post-now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 실제로 게시됐어요 (threadsPostId: ' + data.threadsPostId + ')';
+        document.getElementById('shoppingPostText').value = '';
       } catch (err) {
         msgEl.textContent = '❌ ' + err.message;
       } finally {
