@@ -4,7 +4,8 @@ const path = require('path');
 const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
-const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts } = require('./collectBenchmark');
+const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
+const { scheduleNativePost } = require('./nativeSchedule');
 const accounts = require('./accounts');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearAll } = require('./draftQueue');
@@ -275,6 +276,22 @@ async function handleQueuePublishAction(id) {
   if (!item) throw new Error('이미 처리됐거나 없는 항목이에요.');
   const result = await handleManualPostAction({ text: item.content, type: item.type });
   removeDraft(id);
+  return result;
+}
+
+// 로컬 타이머 예약과 달리, 쓰레드 자체의 예약 기능에 실제로 걸어둔다 — 워커(PC)가 꺼져 있어도 그 시각에 올라간다.
+async function handleScheduleNativeAction(id) {
+  const items = loadQueue();
+  const item = items.find((d) => d.id === id);
+  if (!item) throw new Error('이미 처리됐거나 없는 항목이에요.');
+  if (!item.scheduledAt) throw new Error('먼저 예약 시각을 정해주세요.');
+  const accountId = accounts.load().activeAccountId;
+  const { browser } = await getOrLaunchBrowser(accountId);
+  const pages = await browser.pages();
+  const page = pages[0] || (await browser.newPage());
+  const result = await scheduleNativePost(page, item.content, item.scheduledAt);
+  removeDraft(id);
+  pushLog(`[대시보드] 🧵 "${item.content.slice(0, 20)}..." 쓰레드에 직접 예약 걸림(${new Date(result.scheduledAt).toLocaleString('ko-KR')})`);
   return result;
 }
 
@@ -1007,7 +1024,8 @@ const PAGE = () => `<!doctype html>
           ok: acctDone,
           title: (acctDone ? '✅' : '❌') + ' 쓰레드 계정 연결',
           desc: acctDone ? '로그인된 계정이 있습니다.' : '로그인된 계정이 없습니다. 안 하면: 연결 전까지는 글을 만들 수는 있어도 올릴 수는 없습니다.',
-          hint: acctDone ? '' : '☞ [계정] 탭에서 "지금 확인하기"를 누르면 뜨는 크롬 창에서 평소처럼 쓰레드에 로그인하면 끝입니다.',
+          hint: acctDone ? '' : '☞ 아래 버튼을 눌러 [계정] 탭으로 가서 "지금 확인하기"를 누르면 뜨는 크롬 창에서 평소처럼 쓰레드에 로그인하면 끝입니다.',
+          goToTab: acctDone ? null : 'account',
         },
       ];
       const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
@@ -1015,11 +1033,21 @@ const PAGE = () => `<!doctype html>
         '<h1 style="font-size:14px">시작하기 전에 — 아래 순서대로만 하면 됩니다</h1>' +
         '<div class="sub" style="margin-bottom:10px">✅는 이미 끝난 것이니 넘어가세요. ❌만 위에서부터 차례로 해결하면 됩니다.</div>' +
         items.map((it, i) => (
-          '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '"><div class="ci-title">' + (circled[i] || (i + 1) + '.') + ' ' + it.title + '</div>' +
+          '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<div class="ci-title">' + (circled[i] || (i + 1) + '.') + ' ' + it.title + '</div>' +
+          (it.goToTab ? '<button class="secondary" data-goto-tab="' + it.goToTab + '" style="flex-shrink:0">' + '계정 탭 열기' + '</button>' : '') +
+          '</div>' +
           '<div class="ci-desc">' + it.desc + '</div>' +
           (it.hint ? '<div class="ci-hint">' + it.hint + '</div>' : '') + '</div>'
         )).join('');
     }
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-goto-tab]');
+      if (!btn) return;
+      const nav = document.querySelector('.navitem[data-tab="' + btn.dataset.gotoTab + '"]');
+      if (nav) nav.click();
+    });
 
     async function tick() {
       try {
@@ -1651,7 +1679,10 @@ const PAGE = () => `<!doctype html>
         '<input type="datetime-local" data-sched-input="' + d.id + '" value="' + toLocalInputValue(d.scheduledAt) + '" style="max-width:220px" />' +
         '<button data-sched-set="' + d.id + '">예약 설정</button>' +
         (d.scheduledAt ? '<button class="secondary" data-sched-clear="' + d.id + '">예약 취소</button>' : '') +
-        '</div></div>'
+        (d.scheduledAt ? '<button data-sched-native="' + d.id + '" style="background:#7c3aed">🧵 쓰레드에 진짜 예약 걸기</button>' : '') +
+        '</div>' +
+        '<div class="sub" style="margin:4px 0 0">🧵 버튼: 워커(PC)를 꺼도 그 시각에 올라가요(쓰레드 자체 예약). 안 누르면 워커가 켜져있을 때만 올라가요.</div>' +
+        '</div>'
       )).join('');
     }
     document.getElementById('scheduleRefreshBtn').addEventListener('click', loadSchedule);
@@ -1676,6 +1707,25 @@ const PAGE = () => `<!doctype html>
           body: JSON.stringify({ id: clearBtn.dataset.schedClear, scheduledAt: null }),
         });
         await loadSchedule();
+        return;
+      }
+      const nativeBtn = e.target.closest('[data-sched-native]');
+      if (nativeBtn) {
+        nativeBtn.disabled = true;
+        nativeBtn.textContent = '거는 중...(크롬 창이 떠요)';
+        try {
+          const res = await fetch('/api/action/schedule-native', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: nativeBtn.dataset.schedNative }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '실패');
+          await loadSchedule();
+        } catch (err) {
+          nativeBtn.disabled = false;
+          nativeBtn.textContent = '❌ ' + err.message;
+        }
       }
     });
     document.querySelector('.navitem[data-tab="schedule"]').addEventListener('click', loadSchedule);
@@ -2213,6 +2263,22 @@ function startDashboard() {
           const draft = scheduleDraft(parsed.id, parsed.scheduledAt || null);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, draft }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/schedule-native' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const result = await handleScheduleNativeAction(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));

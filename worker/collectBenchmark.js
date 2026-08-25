@@ -459,4 +459,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, scrapeProfilePosts, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser, MIN_LIKES, MIN_REPLIES };
