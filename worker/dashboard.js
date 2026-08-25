@@ -24,6 +24,22 @@ function saveCustomKeywords(data) {
   fs.writeFileSync(CUSTOM_KEYWORDS_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+// 발행할 때 쓸 기본 쓰레드 계정 — 워커 브라우저 로그인(1개)과 달리, 실제 발행은 공식 API를
+// 쓰므로 유쓰레드 웹에 연결해둔 계정이 여러 개면 그중 하나를 골라 저장해둔다.
+const PREFS_PATH = path.join(os.homedir(), '.u-thread-worker', 'prefs.json');
+function loadPrefs() {
+  try {
+    return JSON.parse(fs.readFileSync(PREFS_PATH, 'utf-8'));
+  } catch {
+    return { defaultThreadsAccountId: null };
+  }
+}
+function savePrefs(data) {
+  const dir = path.dirname(PREFS_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(PREFS_PATH, JSON.stringify(data, null, 2), 'utf-8');
+}
+
 const PORT = 5757;
 const MAX_LOG_LINES = 300;
 const logs = [];
@@ -75,6 +91,17 @@ async function handleCollectAction(body) {
   return job;
 }
 
+async function handleListThreadsAccounts() {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/threads-accounts', {
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '쓰레드 계정 조회 실패');
+  return { accounts: data.accounts || [], defaultThreadsAccountId: loadPrefs().defaultThreadsAccountId };
+}
+
 async function handleCheckAccountAction() {
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
@@ -114,8 +141,12 @@ async function handleManualPostAction(body) {
   const acctRes = await fetch(config.apiBase + '/api/threads-accounts', { headers: authHeaders });
   const acctData = await acctRes.json();
   if (!acctRes.ok) throw new Error(acctData.error || '쓰레드 계정 조회 실패');
-  const account = (acctData.accounts || [])[0];
-  if (!account) throw new Error('연동된 쓰레드 계정이 없습니다. 유쓰레드 웹 대시보드에서 먼저 쓰레드 계정을 연결하세요.');
+  const accounts = acctData.accounts || [];
+  if (!accounts.length) throw new Error('연동된 쓰레드 계정이 없습니다. 유쓰레드 웹 대시보드에서 먼저 쓰레드 계정을 연결하세요.');
+
+  // 연결된 계정이 여러 개면 [계정] 탭에서 고른 기본 계정을 쓴다 — 안 골랐으면 첫 번째로 대체.
+  const prefs = loadPrefs();
+  const account = accounts.find((a) => a.id === prefs.defaultThreadsAccountId) || accounts[0];
 
   const publishRes = await fetch(config.apiBase + '/api/threads-accounts/publish', {
     method: 'POST',
@@ -373,14 +404,21 @@ const PAGE = () => `<!doctype html>
 
       <div class="tab-panel" data-panel="account">
         <div class="card">
-          <h1>👤 계정</h1>
-          <div class="sub">이 워커가 조종하는 전용 크롬 프로필이 지금 쓰레드에 로그인돼 있는지 확인해요. (지금 구조는 워커 1개당 쓰레드 계정 1개 — 서브계정 여러 개 연결은 아직 지원 안 해요)</div>
+          <h1>👤 좋아요·댓글용 브라우저 로그인</h1>
+          <div class="sub">이 워커가 조종하는 전용 크롬 프로필이 지금 쓰레드에 로그인돼 있는지 확인해요(검색·좋아요·댓글·수집에 씀). 이 크롬 프로필은 1개라 계정도 1개예요.</div>
           <div class="row"><span class="dot" id="acctDot"></span><span id="acctText">아직 확인 안 함</span></div>
           <div class="row"><span class="label">클로드 계정</span><span id="acctClaudeEmail">-</span></div>
           <div class="actions">
             <button id="checkAcctBtn">지금 확인하기</button>
           </div>
           <div id="acctMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;"></div>
+        </div>
+
+        <div class="card">
+          <h1 style="font-size:14px">📮 실제 게시할 계정</h1>
+          <div class="sub">실제 발행은 공식 API를 쓰기 때문에, 유쓰레드 웹에 연결해둔 쓰레드 계정이 여러 개면 그중 어디로 올릴지 여기서 고를 수 있어요.</div>
+          <div id="acctListArea"></div>
+          <div id="acctListMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
         </div>
 
         <div class="card">
@@ -960,6 +998,41 @@ const PAGE = () => `<!doctype html>
     document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
     loadCustomKeywords();
 
+    async function loadThreadsAccountList() {
+      const el = document.getElementById('acctListArea');
+      el.textContent = '불러오는 중...';
+      try {
+        const res = await fetch('/api/threads-accounts-list');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        if (!data.accounts.length) {
+          el.innerHTML = '<div class="sub">연동된 쓰레드 계정이 없어요. 유쓰레드 웹 대시보드에서 먼저 연결하세요.</div>';
+          return;
+        }
+        el.innerHTML = data.accounts.map((a) => (
+          '<label style="display:flex;align-items:center;gap:8px;border:1px solid #e5e5e5;border-radius:8px;padding:10px;margin-bottom:6px;cursor:pointer">' +
+          '<input type="radio" name="defaultAcct" value="' + a.id + '"' + (a.id === data.defaultThreadsAccountId ? ' checked' : '') + ' />' +
+          '<span style="font-weight:800;font-size:13px">@' + (a.username || a.threads_user_id) + '</span>' +
+          '</label>'
+        )).join('');
+        if (!data.defaultThreadsAccountId) {
+          document.getElementById('acctListMsg').textContent = '아직 안 골랐으면 첫 번째 계정으로 자동 게시돼요. 원하는 계정을 선택하면 저장됩니다.';
+        }
+      } catch (err) {
+        el.innerHTML = '<div class="sub">❌ ' + err.message + '</div>';
+      }
+    }
+    document.addEventListener('change', async (e) => {
+      if (e.target.name !== 'defaultAcct') return;
+      await fetch('/api/action/set-default-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: e.target.value }),
+      });
+      document.getElementById('acctListMsg').textContent = '✅ 이 계정으로 게시하도록 저장됐어요.';
+    });
+    document.querySelector('.navitem[data-tab="account"]').addEventListener('click', loadThreadsAccountList);
+
     document.getElementById('checkAcctBtn').addEventListener('click', async () => {
       const btn = document.getElementById('checkAcctBtn');
       btn.disabled = true;
@@ -1152,6 +1225,34 @@ function startDashboard() {
         try {
           const parsed = JSON.parse(body || '{}');
           removeDraft(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/threads-accounts-list') {
+      handleListThreadsAccounts()
+        .then((data) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+      return;
+    }
+    if (req.url === '/api/action/set-default-account' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          savePrefs({ defaultThreadsAccountId: parsed.id || null });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
         } catch (err) {
