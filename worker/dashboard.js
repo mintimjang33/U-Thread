@@ -5,8 +5,9 @@ const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
 const { closeBrowser, scrapeThreadsPost } = require('./collectBenchmark');
-const { takeUnusedMaterials } = require('./materials');
+const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft } = require('./draftQueue');
+const tossLinks = require('./tossLinks');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -272,13 +273,13 @@ const NAV_SECTIONS = [
       { id: 'clone', label: '채널 복제', ready: false },
       { id: 'revenue', label: '수익', ready: false },
       { id: 'review', label: '검수', ready: true },
-      { id: 'toss', label: '토스링크(테스트)', ready: false },
+      { id: 'toss', label: '토스링크(테스트)', ready: true },
     ],
   },
   {
     label: '준비',
     items: [
-      { id: 'ideas', label: '글감 창고', ready: false },
+      { id: 'ideas', label: '글감 창고', ready: true },
       { id: 'account', label: '계정', ready: true },
       { id: 'persona', label: '페르소나', ready: false },
       { id: 'coupang', label: '쿠파스 API 연결', ready: false },
@@ -612,6 +613,51 @@ const PAGE = () => `<!doctype html>
           </div>
           <div class="sub">일상글 바로쓰기·직접소싱·붙여넣기로 담긴 글이 여기 쌓여요. 실제로 게시하려면 [지금 게시]를 누르세요.</div>
           <div id="reviewList"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="ideas">
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1>📦 글감 창고</h1>
+            <button class="secondary" id="ideasRefreshBtn">🔄 새로고침</button>
+          </div>
+          <div class="sub">[직접 소싱(커스텀)]에서 원본 수집한 글감이 여기 쌓여요. "바로쓰기"에서 쓴(사용됨) 것도 계속 보여요 — 지우려면 [버리기]를 누르세요.</div>
+          <div class="actions" style="margin-top:8px">
+            <button class="secondary" id="ideasFilterAll">전체</button>
+            <button class="secondary" id="ideasFilterDaily">일상</button>
+            <button class="secondary" id="ideasFilterShopping">쇼핑</button>
+          </div>
+          <div id="ideasList" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="toss">
+        <div class="card" style="max-width:720px">
+          <h1>🔵 토스링크 <span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:999px">테스트</span></h1>
+          <div class="sub">토스쇼핑 쉐어링크를 모아 두고, 정산 제출까지 챙기는 곳이에요. 토스쇼핑 쉐어링크에 쓸 수 있는 공개 API가 확인되지 않아 자동 연결은 없어요 — 링크는 직접 만들어서 저장해두는 방식이에요.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🔗 내 토스 링크 저장소</h1>
+          <div class="sub">키워드로 저장해두면 다음에 같은 상품일 때 찾아 쓰기 쉬워요.</div>
+          <div class="row">
+            <input type="text" id="tossKeyword" placeholder="키워드 (예: 케라시스 샴푸)" style="max-width:220px" />
+            <input type="text" id="tossUrl" placeholder="https://toss.im/_m/..." />
+            <button id="tossAddLinkBtn">담기</button>
+          </div>
+          <div id="tossLinksList" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">✅ 정산 제출 체크리스트</h1>
+          <div class="sub">토스는 올린 글 주소를 토스 폼에 제출해야 정산돼요. 여기 담아두고 하나씩 체크하세요.</div>
+          <div class="row">
+            <input type="text" id="tossPostUrl" placeholder="올린 쓰레드 글 주소 https://www.threads.com/@.../post/..." />
+            <input type="text" id="tossMemo" placeholder="메모(상품명 등)" style="max-width:160px" />
+            <button id="tossAddSubmissionBtn">담기</button>
+          </div>
+          <div id="tossSubmissionsList" style="margin-top:10px"></div>
         </div>
       </div>
 
@@ -1079,6 +1125,113 @@ const PAGE = () => `<!doctype html>
       }
     });
 
+    // ---- 글감 창고 ----
+    let ideasFilter = 'all';
+    async function loadIdeas() {
+      const res = await fetch('/api/materials');
+      const data = await res.json();
+      const combined = [
+        ...(data.daily || []).map((m) => ({ ...m, type: 'daily' })),
+        ...(data.shopping || []).map((m) => ({ ...m, type: 'shopping' })),
+      ].sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+      const filtered = ideasFilter === 'all' ? combined : combined.filter((m) => m.type === ideasFilter);
+      const el = document.getElementById('ideasList');
+      if (!filtered.length) {
+        el.innerHTML = '<div class="sub">아직 수집된 글이 없습니다 — [직접 소싱(커스텀)]에서 원본 수집을 먼저 하세요.</div>';
+        return;
+      }
+      el.innerHTML = filtered.map((m) => (
+        '<div class="checkitem"><div class="ci-title">' + (m.type === 'shopping' ? '🛒 쇼핑' : '💬 일상') + (m.used ? ' · 사용됨' : ' · 안 씀') + '</div>' +
+        '<div class="ci-desc" style="white-space:pre-wrap">' + m.content.replace(/</g, '&lt;').slice(0, 300) + '</div>' +
+        '<div class="actions" style="margin-top:6px"><button class="secondary" data-material-remove="' + m.id + '" data-material-type="' + m.type + '">버리기</button></div></div>'
+      )).join('');
+    }
+    document.getElementById('ideasRefreshBtn').addEventListener('click', loadIdeas);
+    document.getElementById('ideasFilterAll').addEventListener('click', () => { ideasFilter = 'all'; loadIdeas(); });
+    document.getElementById('ideasFilterDaily').addEventListener('click', () => { ideasFilter = 'daily'; loadIdeas(); });
+    document.getElementById('ideasFilterShopping').addEventListener('click', () => { ideasFilter = 'shopping'; loadIdeas(); });
+    document.addEventListener('click', async (e) => {
+      const el = e.target.closest('[data-material-remove]');
+      if (!el) return;
+      await fetch('/api/action/materials-remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: el.dataset.materialRemove, type: el.dataset.materialType }),
+      });
+      await loadIdeas();
+    });
+    document.querySelector('.navitem[data-tab="ideas"]').addEventListener('click', loadIdeas);
+
+    // ---- 토스링크(테스트) ----
+    async function loadToss() {
+      const res = await fetch('/api/toss');
+      const data = await res.json();
+      const linksEl = document.getElementById('tossLinksList');
+      linksEl.innerHTML = (data.links || []).length
+        ? data.links.map((l) => (
+            '<div class="row"><span style="font-weight:800;min-width:100px">' + l.keyword + '</span>' +
+            '<a href="' + l.url + '" target="_blank" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">' + l.url + '</a>' +
+            '<button class="secondary" data-toss-remove-link="' + l.id + '">삭제</button></div>'
+          )).join('')
+        : '<div class="sub">아직 담아 둔 링크가 없습니다.</div>';
+
+      const subEl = document.getElementById('tossSubmissionsList');
+      subEl.innerHTML = (data.submissions || []).length
+        ? data.submissions.map((s) => (
+            '<div class="row"><input type="checkbox" data-toss-toggle-sub="' + s.id + '"' + (s.checked ? ' checked' : '') + ' />' +
+            '<a href="' + s.postUrl + '" target="_blank" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px' + (s.checked ? ';text-decoration:line-through;color:#aaa' : '') + '">' + s.postUrl + '</a>' +
+            '<span style="font-size:11px;color:#888">' + (s.memo || '') + '</span>' +
+            '<button class="secondary" data-toss-remove-sub="' + s.id + '">삭제</button></div>'
+          )).join('')
+        : '<div class="sub">아직 담아 둔 글이 없습니다.</div>';
+    }
+    document.getElementById('tossAddLinkBtn').addEventListener('click', async () => {
+      const keyword = document.getElementById('tossKeyword').value.trim();
+      const url = document.getElementById('tossUrl').value.trim();
+      if (!keyword || !url) return;
+      await fetch('/api/action/toss-add-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword, url }),
+      });
+      document.getElementById('tossKeyword').value = '';
+      document.getElementById('tossUrl').value = '';
+      await loadToss();
+    });
+    document.getElementById('tossAddSubmissionBtn').addEventListener('click', async () => {
+      const postUrl = document.getElementById('tossPostUrl').value.trim();
+      const memo = document.getElementById('tossMemo').value.trim();
+      if (!postUrl) return;
+      await fetch('/api/action/toss-add-submission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postUrl, memo }),
+      });
+      document.getElementById('tossPostUrl').value = '';
+      document.getElementById('tossMemo').value = '';
+      await loadToss();
+    });
+    document.addEventListener('click', async (e) => {
+      const rmLink = e.target.closest('[data-toss-remove-link]');
+      if (rmLink) {
+        await fetch('/api/action/toss-remove-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: rmLink.dataset.tossRemoveLink }) });
+        await loadToss();
+        return;
+      }
+      const rmSub = e.target.closest('[data-toss-remove-sub]');
+      if (rmSub) {
+        await fetch('/api/action/toss-remove-submission', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: rmSub.dataset.tossRemoveSub }) });
+        await loadToss();
+      }
+    });
+    document.addEventListener('change', async (e) => {
+      const tog = e.target.closest('[data-toss-toggle-sub]');
+      if (!tog) return;
+      await fetch('/api/action/toss-toggle-submission', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: tog.dataset.tossToggleSub }) });
+      await loadToss();
+    });
+    document.querySelector('.navitem[data-tab="toss"]').addEventListener('click', loadToss);
+
     document.querySelector('.navitem[data-tab="custom"]').addEventListener('click', loadCustomKeywords);
     document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
     loadCustomKeywords();
@@ -1285,6 +1438,55 @@ function startDashboard() {
     if (req.url === '/api/queue') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ items: loadQueue() }));
+      return;
+    }
+    if (req.url === '/api/materials') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(loadMaterials()));
+      return;
+    }
+    if (req.url === '/api/action/materials-remove' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          removeMaterial(parsed.type, parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/toss') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(tossLinks.load()));
+      return;
+    }
+    if (req.url.startsWith('/api/action/toss-') && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          let data;
+          if (req.url === '/api/action/toss-set-key') data = tossLinks.setApiKey(parsed.apiKey);
+          else if (req.url === '/api/action/toss-add-link') data = tossLinks.addLink(parsed.keyword, parsed.url);
+          else if (req.url === '/api/action/toss-remove-link') data = tossLinks.removeLink(parsed.id);
+          else if (req.url === '/api/action/toss-add-submission') data = tossLinks.addSubmission(parsed.postUrl, parsed.memo);
+          else if (req.url === '/api/action/toss-toggle-submission') data = tossLinks.toggleSubmission(parsed.id);
+          else if (req.url === '/api/action/toss-remove-submission') data = tossLinks.removeSubmission(parsed.id);
+          else throw new Error('알 수 없는 요청');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     if (req.url === '/api/action/queue-publish' && req.method === 'POST') {

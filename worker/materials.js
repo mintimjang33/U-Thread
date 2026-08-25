@@ -42,4 +42,10 @@ function takeUnusedMaterials(type, count) {
   return unused;
 }
 
-module.exports = { loadMaterials, addMaterials, takeUnusedMaterials };
+function removeMaterial(type, id) {
+  const data = loadMaterials();
+  data[type] = (data[type] || []).filter((m) => m.id !== id);
+  saveMaterials(data);
+}
+
+module.exports = { loadMaterials, addMaterials, takeUnusedMaterials, removeMaterial };
