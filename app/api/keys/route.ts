@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '../../../lib/supabase';
 import { getCurrentUser } from '../../../lib/supabaseServerAuth';
+import { getWorkerUserId } from '../../../lib/workerAuth';
 import { encryptVaultValue } from '../../../lib/vaultCrypto';
 
 export async function GET(request: Request) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+  const workerUserId = await getWorkerUserId(request);
+  const user = workerUserId ? null : await getCurrentUser();
+  const userId = workerUserId || user?.id;
+  if (!userId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const provider = searchParams.get('provider') || 'GEMINI';
@@ -14,7 +17,7 @@ export async function GET(request: Request) {
   const { data } = await supabase
     .from('ut_api_keys_vault')
     .select('id')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .eq('provider', provider)
     .maybeSingle();
 

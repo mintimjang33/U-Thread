@@ -8,6 +8,7 @@ const { closeBrowser, scrapeThreadsPost } = require('./collectBenchmark');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
+const persona = require('./persona');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -92,6 +93,17 @@ async function handleCollectAction(body) {
   return job;
 }
 
+async function handleKeyStatus(provider) {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + `/api/keys?provider=${encodeURIComponent(provider)}`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '조회 실패');
+  return data;
+}
+
 async function handleListThreadsAccounts() {
   const config = loadConfig();
   if (!config) throw new Error('페어링 설정이 없습니다.');
@@ -162,7 +174,10 @@ async function handleManualPostAction(body) {
 
 function buildRewritePrompt(type, sourceText) {
   const styleNote = type === 'shopping' ? '쇼핑/제품 소개 느낌으로, 광고 티 안 나게 자연스럽게' : '평범한 일상 공유 느낌으로';
-  return `아래는 실제로 반응이 좋았던 쓰레드(Threads) 게시물이다. 표현과 구조(훅 방식, 문장 길이, 이모지 사용)만 참고해서, 완전히 새로운 내용으로 다시 써라. 그대로 베끼면 안 되고, 욕설/과도한 광고 문구는 쓰지 않는다. ${styleNote}. 결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).
+  const personaNote = persona.load().note;
+  return `아래는 실제로 반응이 좋았던 쓰레드(Threads) 게시물이다. 표현과 구조(훅 방식, 문장 길이, 이모지 사용)만 참고해서, 완전히 새로운 내용으로 다시 써라. 그대로 베끼면 안 되고, 욕설/과도한 광고 문구는 쓰지 않는다. ${styleNote}.
+말투 지침(반드시 따를 것): ${personaNote}
+결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).
 
 ===원본 시작===
 ${sourceText.slice(0, 800)}
@@ -243,6 +258,23 @@ async function handleQueuePublishAction(id) {
   return result;
 }
 
+async function handlePersonaAnalyzeAction(body) {
+  const raw = (body?.handle || '').trim();
+  if (!raw) throw new Error('계정 핸들이나 링크를 입력하세요.');
+  const url = raw.startsWith('http') ? raw : `https://www.threads.net/@${raw.replace(/^@/, '')}`;
+  pushLog(`[대시보드] 페르소나 분석용 페이지 여는 중: ${url}`);
+  const sourceText = await scrapeThreadsPost(url);
+  const prompt = `아래는 어떤 쓰레드(Threads) 계정의 실제 게시물이다. 이 글의 말투(반말/존댓말, 어조, 자주 쓰는 표현, 이모지 사용 습관, 문장 길이)를 분석해서, 앞으로 다른 주제의 글을 쓸 때 그대로 따라 할 수 있게 2~3문장으로 요약해라. 설명 없이 요약 결과만 출력해라.
+
+===게시물 시작===
+${sourceText.slice(0, 800)}
+===게시물 끝===`;
+  const note = (await generateViaClaude(prompt)).trim();
+  persona.save({ note, sourceHandle: raw });
+  pushLog(`[대시보드] 페르소나 적용됨: ${note.slice(0, 60)}...`);
+  return { note };
+}
+
 async function handleRecheckAction() {
   logs.length = 0; // 재연결하면 로그를 비우고 새로 시작 — 예전 로그와 섞여서 헷갈리지 않게.
   pushLog('[대시보드] 재연결 시작...');
@@ -271,7 +303,7 @@ const NAV_SECTIONS = [
       { id: 'schedule', label: '예약', ready: false },
       { id: 'custom', label: '직접 소싱(커스텀)', ready: true },
       { id: 'clone', label: '채널 복제', ready: false },
-      { id: 'revenue', label: '수익', ready: false },
+      { id: 'revenue', label: '수익', ready: true },
       { id: 'review', label: '검수', ready: true },
       { id: 'toss', label: '토스링크(테스트)', ready: true },
     ],
@@ -281,8 +313,8 @@ const NAV_SECTIONS = [
     items: [
       { id: 'ideas', label: '글감 창고', ready: true },
       { id: 'account', label: '계정', ready: true },
-      { id: 'persona', label: '페르소나', ready: false },
-      { id: 'coupang', label: '쿠파스 API 연결', ready: false },
+      { id: 'persona', label: '페르소나', ready: true },
+      { id: 'coupang', label: '쿠파스 API 연결', ready: true },
     ],
   },
 ];
@@ -658,6 +690,54 @@ const PAGE = () => `<!doctype html>
             <button id="tossAddSubmissionBtn">담기</button>
           </div>
           <div id="tossSubmissionsList" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="persona">
+        <div class="card" style="max-width:720px">
+          <h1>🎭 페르소나</h1>
+          <div class="sub">글을 쓰는 말투를 정하는 곳이에요. 아무것도 안 하면 기본 말투로 써요. 닮고 싶은 계정이 있으면 링크를 넣으세요 — 글을 읽어 말투를 분석한 뒤 그대로 씁니다.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">지금 적용 중</h1>
+          <div id="personaNoteView" class="sub" style="color:#333"></div>
+          <div class="actions" style="margin-top:8px">
+            <button class="secondary" id="personaResetBtn">↩ 기본 말투로</button>
+          </div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🪞 닮고 싶은 계정으로 분석</h1>
+          <div class="sub">닮고 싶은 계정의 @핸들이나 프로필/게시물 주소를 넣으면, 그 계정 글을 읽어 말투를 분석한 뒤 앞으로 쓰는 모든 글이 그 말투를 따르게 해요.</div>
+          <div class="row">
+            <input type="text" id="personaHandle" placeholder="@handle 또는 https://www.threads.com/@handle 또는 게시물 링크" />
+            <button id="personaAnalyzeBtn">분석해서 적용</button>
+          </div>
+          <div id="personaMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="revenue">
+        <div class="card" style="max-width:720px">
+          <h1>💰 수익</h1>
+          <div class="sub">쿠팡 파트너스(쿠파스) 실적입니다. 쿠팡파트너스는 클릭/전환 실적을 공개적으로 확인할 수 있는 API가 문서화돼 있지 않아서(2026-08-25 기준 확인), 정확한 수익은 쿠팡파트너스 사이트에서 직접 확인해야 해요.</div>
+          <div class="row"><span class="label">쿠팡 API 키</span><span id="revenueKeyStatus">확인 중...</span></div>
+          <div class="actions" style="margin-top:8px">
+            <a href="https://partners.coupang.com" target="_blank"><button class="secondary">쿠팡파트너스 실적 페이지 열기 ↗</button></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="coupang">
+        <div class="card" style="max-width:720px">
+          <h1>🛍️ 쿠파스 API 연결</h1>
+          <div class="sub">쿠팡 파트너스 키는 유쓰레드 웹 대시보드에서 등록해요(암호화 저장이라 이 로컬 워커에서는 직접 입력하지 않아요). 여기서는 등록 여부만 확인할 수 있어요.</div>
+          <div class="row"><span class="label">등록 상태</span><span id="coupangKeyStatus">확인 중...</span></div>
+          <div class="actions" style="margin-top:8px">
+            <button id="coupangCheckBtn">🔄 다시 확인</button>
+            <button class="secondary" id="coupangOpenBtn">키 등록하러 가기 ↗</button>
+          </div>
         </div>
       </div>
 
@@ -1232,6 +1312,62 @@ const PAGE = () => `<!doctype html>
     });
     document.querySelector('.navitem[data-tab="toss"]').addEventListener('click', loadToss);
 
+    // ---- 페르소나 ----
+    async function loadPersona() {
+      const res = await fetch('/api/persona');
+      const data = await res.json();
+      document.getElementById('personaNoteView').textContent = data.note + (data.sourceHandle ? ' (출처: ' + data.sourceHandle + ')' : ' (고정)');
+    }
+    document.getElementById('personaAnalyzeBtn').addEventListener('click', async () => {
+      const handle = document.getElementById('personaHandle').value.trim();
+      const msgEl = document.getElementById('personaMsg');
+      if (!handle) { msgEl.textContent = '❌ 계정을 입력하세요.'; return; }
+      const btn = document.getElementById('personaAnalyzeBtn');
+      btn.disabled = true;
+      msgEl.textContent = '분석 중... (크롬으로 그 계정 글을 열어봐요, 10~20초 걸려요)';
+      try {
+        const res = await fetch('/api/action/persona-analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ handle }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 적용됐어요. 앞으로 만드는 글이 이 말투를 따라요.';
+        await loadPersona();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    document.getElementById('personaResetBtn').addEventListener('click', async () => {
+      await fetch('/api/action/persona-reset', { method: 'POST' });
+      await loadPersona();
+    });
+    document.querySelector('.navitem[data-tab="persona"]').addEventListener('click', loadPersona);
+
+    // ---- 수익 / 쿠파스 API 연결 ----
+    async function loadKeyStatus(elId) {
+      const el = document.getElementById(elId);
+      el.textContent = '확인 중...';
+      try {
+        const res = await fetch('/api/key-status?provider=COUPANG');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        el.textContent = data.hasKey ? '✅ 등록됨' : '❌ 미등록';
+      } catch (err) {
+        el.textContent = '❌ ' + err.message;
+      }
+    }
+    document.querySelector('.navitem[data-tab="revenue"]').addEventListener('click', () => loadKeyStatus('revenueKeyStatus'));
+    document.querySelector('.navitem[data-tab="coupang"]').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
+    document.getElementById('coupangCheckBtn').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
+    document.getElementById('coupangOpenBtn').addEventListener('click', () => {
+      const base = window.__apiBase || 'https://u-thread.vercel.app';
+      window.open(base + '/onboarding/coupang', '_blank');
+    });
+
     document.querySelector('.navitem[data-tab="custom"]').addEventListener('click', loadCustomKeywords);
     document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
     loadCustomKeywords();
@@ -1464,6 +1600,45 @@ function startDashboard() {
     if (req.url === '/api/toss') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(tossLinks.load()));
+      return;
+    }
+    if (req.url === '/api/persona') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(persona.load()));
+      return;
+    }
+    if (req.url === '/api/action/persona-analyze' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const result = await handlePersonaAnalyzeAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/persona-reset' && req.method === 'POST') {
+      const data = persona.reset();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ...data }));
+      return;
+    }
+    if (req.url.startsWith('/api/key-status')) {
+      const provider = new URL(req.url, 'http://x').searchParams.get('provider') || 'COUPANG';
+      handleKeyStatus(provider)
+        .then((data) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
       return;
     }
     if (req.url.startsWith('/api/action/toss-') && req.method === 'POST') {
