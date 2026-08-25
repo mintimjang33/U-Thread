@@ -1,6 +1,6 @@
 const { loadConfig } = require('./config');
 const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
-const { collectBenchmark } = require('./collectBenchmark');
+const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
 const { startDashboard, setStatus } = require('./dashboard');
 
 const POLL_INTERVAL_MS = 8000;
@@ -26,6 +26,10 @@ async function claimAndRun(config, job) {
       output = { content };
     } else if (job.type === 'collect_benchmark') {
       output = await collectBenchmark(job.input);
+    } else if (job.type === 'check_threads_login') {
+      const loggedIn = await checkLoginStatus();
+      setStatus({ threadsLoggedIn: loggedIn, threadsCheckedAt: new Date().toISOString() });
+      output = { loggedIn };
     } else {
       throw new Error(`알 수 없는 작업 타입: ${job.type}`);
     }

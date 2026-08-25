@@ -148,6 +148,40 @@ async function closeBrowser() {
   }
 }
 
+async function checkThreadsLogin(page) {
+  return safeEvaluate(page, () => !document.body.innerText.includes('로그인'));
+}
+
+// 사이드바 "계정" 탭에서 쓰는 가벼운 연결 확인 — collectBenchmark()처럼 5분씩 로그인 대기하지 않고
+// 지금 로그인 상태인지만 빠르게 보고 끝낸다. 이미 떠 있는 브라우저가 있으면 그걸 재사용하고,
+// 없으면 새로 띄웠다가 확인 후 닫는다(백그라운드 상태 확인용 창을 계속 남겨두지 않기 위함).
+async function checkLoginStatus() {
+  const executablePath = findChrome();
+  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
+
+  const reusingExisting = !!currentBrowser;
+  const browser =
+    currentBrowser ||
+    (currentBrowser = await puppeteer.launch({
+      executablePath,
+      headless: false,
+      userDataDir: PROFILE_DIR,
+      args: ['--no-first-run', '--no-default-browser-check'],
+    }));
+
+  const page = await browser.newPage();
+  try {
+    await page.goto('https://www.threads.net/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    return await checkThreadsLogin(page);
+  } finally {
+    await page.close().catch(() => {});
+    if (!reusingExisting) {
+      await closeBrowser();
+    }
+  }
+}
+
 async function collectBenchmark(input) {
   const executablePath = findChrome();
   if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
@@ -330,4 +364,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, closeBrowser, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, MIN_LIKES, MIN_REPLIES };
