@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '../../../lib/supabase';
 import { getCurrentUser } from '../../../lib/supabaseServerAuth';
+import { getWorkerUserId } from '../../../lib/workerAuth';
 import { decryptVaultValue } from '../../../lib/vaultCrypto';
 import { coupangDeeplink } from '../../../lib/coupangApi';
 
@@ -53,8 +54,10 @@ const COMPLIANCE_RULES: Record<string, string> = {
 type Product = { productName: string; productPrice: number; productUrl: string };
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+  const workerUserId = await getWorkerUserId(request);
+  const user = workerUserId ? null : await getCurrentUser();
+  const userId = workerUserId || user?.id;
+  if (!userId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const body = await request.json().catch(() => null);
   const product = body?.product as Product | undefined;
@@ -70,7 +73,7 @@ export async function POST(request: Request) {
     const { data: post, error } = await supabase
       .from('ut_thread_posts')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         persona_id: body.personaIsSystem ? null : body.personaId || null,
         topic: body.topic || '',
         content: body.topic || '',
@@ -83,7 +86,7 @@ export async function POST(request: Request) {
   }
 
   // 로컬 워커(클로드 구독) 사용 조건: 설정이 'worker'이고, 워커 전용 처리로 못 다루는 이미지/구글검색 그라운딩이 없을 때만.
-  const { data: editorDefaults } = await supabase.from('ut_editor_defaults').select('ai_source').eq('user_id', user.id).maybeSingle();
+  const { data: editorDefaults } = await supabase.from('ut_editor_defaults').select('ai_source').eq('user_id', userId).maybeSingle();
   const useWorker = editorDefaults?.ai_source === 'worker' && !body.mediaBase64 && body.googleSearch !== true;
 
   let apiKey = '';
@@ -91,7 +94,7 @@ export async function POST(request: Request) {
     const { data: keyRow } = await supabase
       .from('ut_api_keys_vault')
       .select('encrypted_values')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('provider', 'GEMINI')
       .maybeSingle();
 
@@ -107,7 +110,7 @@ export async function POST(request: Request) {
     const { data: sp } = await supabase.from('ut_system_personas').select('prompt').eq('id', body.personaId).maybeSingle();
     if (sp) personaContext = `\n\n페르소나 스타일 지침:\n${sp.prompt}`;
   } else if (body.personaId) {
-    const { data: persona } = await supabase.from('ut_personas').select('*').eq('id', body.personaId).eq('user_id', user.id).maybeSingle();
+    const { data: persona } = await supabase.from('ut_personas').select('*').eq('id', body.personaId).eq('user_id', userId).maybeSingle();
     if (persona) {
       personaContext = `\n\n말투: ${persona.tone_prompt || '기본'}\n타겟: ${persona.target_prompt || '일반 독자'}`;
     }
@@ -118,7 +121,7 @@ export async function POST(request: Request) {
   const { data: benchmarks } = await supabase
     .from('ut_benchmark_items')
     .select('content')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(20);
   let benchmarkContext = '';
@@ -153,7 +156,7 @@ export async function POST(request: Request) {
     const { data: keyRow2 } = await supabase
       .from('ut_api_keys_vault')
       .select('encrypted_values')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('provider', 'COUPANG')
       .maybeSingle();
     const coupangEnc = keyRow2?.encrypted_values;
@@ -187,7 +190,7 @@ export async function POST(request: Request) {
       `${systemPrompt}${personaContext}${benchmarkContext}\n\n---\n\n${userPrompt}\n\n(반드시 위 시스템 지침의 JSON 형식으로만 응답할 것. 다른 설명 텍스트 없이 JSON만 출력.)`;
     const { data: job, error: jobError } = await supabase
       .from('ut_worker_jobs')
-      .insert({ user_id: user.id, type: 'generate', input: { prompt: combinedPrompt } })
+      .insert({ user_id: userId, type: 'generate', input: { prompt: combinedPrompt } })
       .select()
       .single();
     if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -251,7 +254,7 @@ export async function POST(request: Request) {
   const { data: post, error } = await supabase
     .from('ut_thread_posts')
     .insert({
-      user_id: user.id,
+      user_id: userId,
       persona_id: body.personaIsSystem ? null : body.personaId || null,
       topic: body.topic || product?.productName || body.affiliateProductName || '',
       content,

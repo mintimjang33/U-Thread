@@ -69,6 +69,44 @@ async function handleCheckAccountAction() {
   return job;
 }
 
+// "내가 직접 써서 올리기" — 이미 있는 유쓰레드 API 두 개를 그대로 이어붙인다(새로 만든 기능 아님):
+// smart-editor(mode:'manual')로 초안을 만들고, threads-accounts/publish로 실제 발행.
+// 두 라우트 모두 원래 쿠키 세션 전용이었는데, /api/worker/jobs에 이미 쓰던 것과 같은
+// 방식으로 워커 Bearer 토큰도 받아들이게 살짝 넓혀뒀다.
+async function handleManualPostAction(body) {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const text = (body?.text || '').trim();
+  if (!text) throw new Error('올릴 글 내용이 없습니다.');
+
+  const authHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` };
+
+  const draftRes = await fetch(config.apiBase + '/api/smart-editor', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({ mode: 'manual', topic: text }),
+  });
+  const draftData = await draftRes.json();
+  if (!draftRes.ok) throw new Error(draftData.error || '초안 생성 실패');
+  pushLog(`[대시보드] 초안 생성 완료(${draftData.post.id.slice(0, 8)}) — 발행 시도 중...`);
+
+  const acctRes = await fetch(config.apiBase + '/api/threads-accounts', { headers: authHeaders });
+  const acctData = await acctRes.json();
+  if (!acctRes.ok) throw new Error(acctData.error || '쓰레드 계정 조회 실패');
+  const account = (acctData.accounts || [])[0];
+  if (!account) throw new Error('연동된 쓰레드 계정이 없습니다. 유쓰레드 웹 대시보드에서 먼저 쓰레드 계정을 연결하세요.');
+
+  const publishRes = await fetch(config.apiBase + '/api/threads-accounts/publish', {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({ postId: draftData.post.id, threadsAccountId: account.id }),
+  });
+  const publishData = await publishRes.json();
+  if (!publishRes.ok) throw new Error(publishData.error || '발행 실패');
+  pushLog(`[대시보드] ✅ 실제 쓰레드에 게시 완료 (threadsPostId: ${publishData.threadsPostId})`);
+  return publishData;
+}
+
 async function handleRecheckAction() {
   logs.length = 0; // 재연결하면 로그를 비우고 새로 시작 — 예전 로그와 섞여서 헷갈리지 않게.
   pushLog('[대시보드] 재연결 시작...');
@@ -299,9 +337,10 @@ const PAGE = () => `<!doctype html>
             <button class="secondary" data-soon="사진 붙이기">📷 사진 붙이기</button>
             <button class="secondary" data-soon="변형하기">🎭 변형하기</button>
             <button class="secondary" data-soon="되돌리기">↩ 되돌리기</button>
-            <button data-soon="올리기(실제 게시)">올리기</button>
+            <button id="manualPostBtn">올리기</button>
           </div>
-          <div class="sub">올리기는 아직 준비 중이에요 — 실제 쓰레드 게시 기능이 완성되면 여기서 바로 올라가게 됩니다.</div>
+          <div class="sub">[올리기]는 지금 바로 올립니다. 유쓰레드 웹에서 연동한 쓰레드 계정으로 실제 발행돼요(공식 Meta API 사용, 계정 연동이 안 돼있으면 실패해요).</div>
+          <div id="manualPostMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
         </div>
 
         <div class="card" style="max-width:720px">
@@ -505,6 +544,30 @@ const PAGE = () => `<!doctype html>
       }
     });
 
+    document.getElementById('manualPostBtn').addEventListener('click', async () => {
+      const text = document.getElementById('manualPostText').value.trim();
+      const msgEl = document.getElementById('manualPostMsg');
+      if (!text) { msgEl.textContent = '❌ 올릴 글을 입력하세요.'; return; }
+      const btn = document.getElementById('manualPostBtn');
+      btn.disabled = true;
+      msgEl.textContent = '초안 생성 중...';
+      try {
+        const res = await fetch('/api/action/post-now', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 실제로 게시됐어요 (threadsPostId: ' + data.threadsPostId + ')';
+        document.getElementById('manualPostText').value = '';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     document.getElementById('dailyKeywordBankBtn').addEventListener('click', () => {
       const base = window.__apiBase || 'https://u-thread.vercel.app';
       window.open(base + '/dashboard/ai-worker', '_blank');
@@ -582,6 +645,21 @@ function startDashboard() {
           const job = await handleCollectAction(JSON.parse(body || '{}'));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, job }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/post-now' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const result = await handleManualPostAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));
