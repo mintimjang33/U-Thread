@@ -59,7 +59,7 @@ async function runScheduledPublish() {
   for (const draft of due) {
     console.log(`[예약] "${draft.content.slice(0, 30)}..." 게시 시각 도달 — 게시 시도`);
     try {
-      const result = await handleManualPostAction({ text: draft.content });
+      const result = await handleManualPostAction({ text: draft.content, type: draft.type });
       removeDraft(draft.id);
       console.log(`[예약] ✅ 게시 완료 (threadsPostId: ${result.threadsPostId})`);
     } catch (err) {

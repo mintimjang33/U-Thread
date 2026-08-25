@@ -11,6 +11,7 @@ const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearA
 const tossLinks = require('./tossLinks');
 const persona = require('./persona');
 const channelClone = require('./channelClone');
+const postLog = require('./postLog');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -185,6 +186,7 @@ async function handleManualPostAction(body) {
   const publishData = await publishRes.json();
   if (!publishRes.ok) throw new Error(publishData.error || '발행 실패');
   pushLog(`[대시보드] ✅ 실제 쓰레드에 게시 완료 (threadsPostId: ${publishData.threadsPostId})`);
+  postLog.logPost({ accountId: accounts.load().activeAccountId, type: body?.type });
   return publishData;
 }
 
@@ -271,7 +273,7 @@ async function handleQueuePublishAction(id) {
   const items = loadQueue();
   const item = items.find((d) => d.id === id);
   if (!item) throw new Error('이미 처리됐거나 없는 항목이에요.');
-  const result = await handleManualPostAction({ text: item.content });
+  const result = await handleManualPostAction({ text: item.content, type: item.type });
   removeDraft(id);
   return result;
 }
@@ -511,6 +513,24 @@ const PAGE = () => `<!doctype html>
         </div>
 
         <div class="card" style="max-width:720px" id="checklistCard"></div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">📊 오늘 활동</h1>
+            <button class="secondary" id="todayActivityRefreshBtn">갱신</button>
+          </div>
+          <div class="sub">계정마다 오늘 올린 글(일상·쇼핑)과 좋아요를 봅니다</div>
+          <div id="todayActivityArea"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">계정별 현황</h1>
+            <button class="secondary" id="accountStatusRefreshBtn">갱신</button>
+          </div>
+          <div class="sub">계정마다 오늘 올린 개수·쇼핑글을 쓸 수 있는 상태인지 봅니다</div>
+          <div id="accountStatusArea"></div>
+        </div>
 
         <div class="card">
           <div class="sub" style="margin-bottom:12px">이 창을 닫아도 워커는 계속 돌아가요. 완전히 끄려면 "🛑 워커 종료" 버튼을 쓰세요.</div>
@@ -990,11 +1010,12 @@ const PAGE = () => `<!doctype html>
           hint: acctDone ? '' : '☞ [계정] 탭에서 "지금 확인하기"를 누르면 뜨는 크롬 창에서 평소처럼 쓰레드에 로그인하면 끝입니다.',
         },
       ];
+      const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
       document.getElementById('checklistCard').innerHTML =
         '<h1 style="font-size:14px">시작하기 전에 — 아래 순서대로만 하면 됩니다</h1>' +
         '<div class="sub" style="margin-bottom:10px">✅는 이미 끝난 것이니 넘어가세요. ❌만 위에서부터 차례로 해결하면 됩니다.</div>' +
-        items.map((it) => (
-          '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '"><div class="ci-title">' + it.title + '</div>' +
+        items.map((it, i) => (
+          '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '"><div class="ci-title">' + (circled[i] || (i + 1) + '.') + ' ' + it.title + '</div>' +
           '<div class="ci-desc">' + it.desc + '</div>' +
           (it.hint ? '<div class="ci-hint">' + it.hint + '</div>' : '') + '</div>'
         )).join('');
@@ -1104,7 +1125,7 @@ const PAGE = () => `<!doctype html>
         const res = await fetch('/api/action/post-now', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, type: 'daily' }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
@@ -1183,7 +1204,7 @@ const PAGE = () => `<!doctype html>
         const res = await fetch('/api/action/post-now', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, type: 'shopping' }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
@@ -1835,6 +1856,43 @@ const PAGE = () => `<!doctype html>
     document.querySelector('.navitem[data-tab="account"]').addEventListener('click', loadBrowserAccounts);
     loadBrowserAccounts();
 
+    // ---- 오늘 활동 / 계정별 현황 ----
+    async function loadActivitySummary() {
+      const res = await fetch('/api/activity-summary');
+      const data = await res.json();
+      renderTodayActivity(data.accounts);
+      renderAccountStatus(data.accounts);
+    }
+    function renderTodayActivity(accts) {
+      const active = accts.filter((a) => a.dailyToday + a.shoppingToday > 0);
+      const el = document.getElementById('todayActivityArea');
+      if (!active.length) { el.innerHTML = '<div class="sub" style="margin:0">활성 계정이 없습니다.</div>'; return; }
+      el.innerHTML = active.map((a) => (
+        '<div class="row" style="justify-content:space-between">' +
+        '<span><b>' + a.label + '</b></span>' +
+        '<span style="color:#888">✍️ ' + a.dailyToday + '개 · 🛍️ ' + a.shoppingToday + '개 · ❤️ 0개</span>' +
+        '</div>'
+      )).join('');
+    }
+    function renderAccountStatus(accts) {
+      const el = document.getElementById('accountStatusArea');
+      if (!accts.length) { el.innerHTML = '<div class="sub" style="margin:0">계정이 없습니다.</div>'; return; }
+      el.innerHTML = accts.map((a) => (
+        '<div style="padding:8px 0;border-top:1px solid #eee">' +
+        '<div class="row" style="justify-content:space-between;margin-bottom:2px">' +
+        '<b>' + a.label + '</b>' +
+        '<span style="color:#888;font-size:12px">📷 ' + a.dailyToday + '개 · 🛒 ' + a.shoppingToday + '개</span>' +
+        '</div>' +
+        '<div class="sub" style="margin:0">' +
+        (a.shoppingOpen ? '✅ 쇼핑 열림' : '🔒 쇼핑 준비 중(예열 ' + a.ageDays + '/7일)') +
+        ' · 마지막 ' + (a.lastPostedAt ? new Date(a.lastPostedAt).toLocaleString('ko-KR') : '없음') +
+        '</div></div>'
+      )).join('');
+    }
+    document.getElementById('todayActivityRefreshBtn').addEventListener('click', loadActivitySummary);
+    document.getElementById('accountStatusRefreshBtn').addEventListener('click', loadActivitySummary);
+    loadActivitySummary();
+
     document.getElementById('shutdownBtn').addEventListener('click', async () => {
       if (!confirm('워커를 종료할까요? 콘솔 창도 같이 닫혀요.')) return;
       setMsg('종료 중...');
@@ -1976,6 +2034,27 @@ function startDashboard() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+      return;
+    }
+    if (req.url === '/api/activity-summary') {
+      const accData = accounts.load();
+      const summary = postLog.summaryByAccount();
+      const now = Date.now();
+      const result = accData.accounts.map((a) => {
+        const s = summary[a.id] || { dailyToday: 0, shoppingToday: 0, lastPostedAt: null, firstPostedAt: null };
+        const ageDays = s.firstPostedAt ? Math.floor((now - new Date(s.firstPostedAt).getTime()) / 86400000) : 0;
+        return {
+          id: a.id,
+          label: a.label,
+          dailyToday: s.dailyToday,
+          shoppingToday: s.shoppingToday,
+          lastPostedAt: s.lastPostedAt,
+          ageDays,
+          shoppingOpen: ageDays >= 7,
+        };
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ accounts: result }));
       return;
     }
     if (req.url === '/api/custom-keywords') {
