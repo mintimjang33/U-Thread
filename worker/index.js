@@ -2,6 +2,7 @@ const { loadConfig } = require('./config');
 const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
 const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
 const { startDashboard, setStatus } = require('./dashboard');
+const { addMaterials } = require('./materials');
 
 const POLL_INTERVAL_MS = 8000;
 let claudeEmail = null;
@@ -26,6 +27,12 @@ async function claimAndRun(config, job) {
       output = { content };
     } else if (job.type === 'collect_benchmark') {
       output = await collectBenchmark(job.input);
+      // "직접 소싱(커스텀)" 탭에서 건 수집은 이 탭 전용 로컬 글감 창고에도 저장한다
+      // (다른 탭 글감 창고와 안 섞이게 분리 보관).
+      if (job.input.saveMaterialsAs && output.items?.length) {
+        addMaterials(job.input.saveMaterialsAs, output.items);
+        console.log(`[글감] "${job.input.saveMaterialsAs}" 창고에 ${output.items.length}개 저장 시도(중복 제외)`);
+      }
     } else if (job.type === 'check_threads_login') {
       const loggedIn = await checkLoginStatus();
       setStatus({ threadsLoggedIn: loggedIn, threadsCheckedAt: new Date().toISOString() });

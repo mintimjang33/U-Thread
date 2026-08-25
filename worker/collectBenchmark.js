@@ -34,6 +34,39 @@ const MIN_REPLIES = 50;
 const MAX_LIKES_PER_SESSION = 5; // 봇 탐지 회피 — 짧은 시간에 너무 많이 누르지 않는다.
 const MAX_COMMENTS_PER_SESSION = 3; // 댓글은 좋아요보다 눈에 띄는 행동이라 더 보수적으로 제한.
 
+// 게시물 카드의 innerText 끝에 좋아요/댓글 같은 숫자가 줄바꿈으로 따라붙는다(실측: "...본문\n187\n19\n18\n20").
+// 화면에 보이는 순서(좋아요→댓글→...) 기준으로 앞 두 개를 좋아요/댓글로 추정해서 뽑는다 — 쓰레드가
+// 각 숫자에 라벨을 안 달아줘서 100% 확실하진 않은 추정치임을 감안할 것.
+function parseKoreanCount(s) {
+  const cleaned = s.replace(/,/g, '');
+  if (cleaned.endsWith('천')) return Math.round(parseFloat(cleaned) * 1000);
+  if (cleaned.endsWith('만')) return Math.round(parseFloat(cleaned) * 10000);
+  const n = parseInt(cleaned, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseEngagement(text) {
+  const numLineRe = /^[\d,]+(?:\.\d+)?[천만]?$/;
+  const lines = text.split('\n').map((l) => l.trim());
+  const trailing = [];
+  for (let i = lines.length - 1; i >= 0 && trailing.length < 4; i--) {
+    if (numLineRe.test(lines[i])) trailing.unshift(parseKoreanCount(lines[i]));
+    else if (trailing.length > 0) break;
+  }
+  return { likes: trailing[0] ?? null, replies: trailing[1] ?? null };
+}
+
+function passesEngagementFilter(engagement, input) {
+  const minLikes = Number(input?.minLikes) || 0;
+  const minReplies = Number(input?.minReplies) || 0;
+  if (minLikes === 0 && minReplies === 0) return true;
+  const likes = engagement.likes ?? 0;
+  const replies = engagement.replies ?? 0;
+  if (input?.matchMode === 'both') return likes >= minLikes && replies >= minReplies;
+  // 기본(either): 기준을 하나라도 세웠으면, 그중 하나만 넘어도 통과.
+  return (minLikes > 0 && likes >= minLikes) || (minReplies > 0 && replies >= minReplies) || (minLikes === 0 && minReplies === 0);
+}
+
 // 투더제이 방식 그대로: AI가 먼저 스팸/부적절 여부를 판단하고, 통과한 글에만 짧은 댓글을 만든다.
 async function judgeAndDraftComment(postText) {
   // 큰따옴표 3개(""")로 게시물을 감쌌더니 윈도우 명령줄 인자 이스케이프 과정에서 내용이 통째로 유실되는
@@ -182,6 +215,39 @@ async function checkLoginStatus() {
   }
 }
 
+// "직접 소싱(커스텀)" 탭의 링크 붙여넣기용 — 쓰레드 게시물 URL 하나를 열어서 본문 텍스트만 뽑아온다.
+async function scrapeThreadsPost(url) {
+  const executablePath = findChrome();
+  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
+
+  const reusingExisting = !!currentBrowser;
+  const browser =
+    currentBrowser ||
+    (currentBrowser = await puppeteer.launch({
+      executablePath,
+      headless: false,
+      userDataDir: PROFILE_DIR,
+      args: ['--no-first-run', '--no-default-browser-check'],
+    }));
+
+  const page = await browser.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 2000));
+    const text = await safeEvaluate(page, (sel) => {
+      const first = document.querySelector(sel.postContainer);
+      return first ? first.innerText || '' : '';
+    }, SELECTORS);
+    if (!text.trim()) throw new Error('게시물 내용을 못 찾았어요 — 링크가 맞는지, 로그인이 돼있는지 확인해주세요.');
+    return text;
+  } finally {
+    await page.close().catch(() => {});
+    if (!reusingExisting) {
+      await closeBrowser();
+    }
+  }
+}
+
 async function collectBenchmark(input) {
   const executablePath = findChrome();
   if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
@@ -280,7 +346,9 @@ async function collectBenchmark(input) {
       for (const c of candidates) {
         if (!c.text.trim()) continue;
         if (items.find((it) => it.content === c.text)) continue;
-        items.push({ content: c.text, source: `threads.net 검색:${keyword}` });
+        const engagement = parseEngagement(c.text);
+        if (!passesEngagementFilter(engagement, input)) continue;
+        items.push({ content: c.text, source: `threads.net 검색:${keyword}`, likes: engagement.likes, replies: engagement.replies });
       }
 
       // 사람처럼 보이게 세션당 최대 5개까지만, 느리게 좋아요
@@ -364,4 +432,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, MIN_LIKES, MIN_REPLIES };

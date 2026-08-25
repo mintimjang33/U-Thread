@@ -1,7 +1,28 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const { loadConfig } = require('./config');
-const { getClaudeAccountEmail } = require('./generate');
-const { closeBrowser } = require('./collectBenchmark');
+const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
+const { closeBrowser, scrapeThreadsPost } = require('./collectBenchmark');
+const { takeUnusedMaterials } = require('./materials');
+const { loadQueue, addDraft, removeDraft } = require('./draftQueue');
+
+// "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
+// 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
+const CUSTOM_KEYWORDS_PATH = path.join(os.homedir(), '.u-thread-worker', 'custom-keywords.json');
+function loadCustomKeywords() {
+  try {
+    return JSON.parse(fs.readFileSync(CUSTOM_KEYWORDS_PATH, 'utf-8'));
+  } catch {
+    return { daily: [], shopping: [] };
+  }
+}
+function saveCustomKeywords(data) {
+  const dir = path.dirname(CUSTOM_KEYWORDS_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(CUSTOM_KEYWORDS_PATH, JSON.stringify(data, null, 2), 'utf-8');
+}
 
 const PORT = 5757;
 const MAX_LOG_LINES = 300;
@@ -107,6 +128,89 @@ async function handleManualPostAction(body) {
   return publishData;
 }
 
+function buildRewritePrompt(type, sourceText) {
+  const styleNote = type === 'shopping' ? '쇼핑/제품 소개 느낌으로, 광고 티 안 나게 자연스럽게' : '평범한 일상 공유 느낌으로';
+  return `아래는 실제로 반응이 좋았던 쓰레드(Threads) 게시물이다. 표현과 구조(훅 방식, 문장 길이, 이모지 사용)만 참고해서, 완전히 새로운 내용으로 다시 써라. 그대로 베끼면 안 되고, 욕설/과도한 광고 문구는 쓰지 않는다. ${styleNote}. 결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).
+
+===원본 시작===
+${sourceText.slice(0, 800)}
+===원본 끝===`;
+}
+
+async function handleCustomCollectAction(body) {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const keyword = (body?.keyword || '').trim();
+  if (!keyword) throw new Error('키워드를 입력하세요.');
+  const minutes = Number(body?.minutes) || 10;
+  const maxScrolls = Math.max(3, Math.min(20, Math.round(minutes / 2)));
+  const input = {
+    keyword,
+    maxScrolls,
+    saveMaterialsAs: type,
+    minLikes: Number(body?.minLikes) || 0,
+    minReplies: Number(body?.minReplies) || 0,
+    matchMode: type === 'shopping' ? 'both' : 'either',
+  };
+
+  const res = await fetch(config.apiBase + '/api/worker/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ type: 'collect_benchmark', input }),
+  });
+  if (!res.ok) throw new Error(`작업 생성 실패 (${res.status})`);
+  const { job } = await res.json();
+  pushLog(`[대시보드] 직접소싱 "${keyword}"(${type === 'shopping' ? '쇼핑글' : '일상글'}) 수집 등록(${job.id.slice(0, 8)})`);
+  return job;
+}
+
+async function handleCustomWriteAction(body) {
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const count = Math.max(1, Math.min(5, Number(body?.count) || 1));
+  const materials = takeUnusedMaterials(type, count);
+  if (!materials.length) throw new Error('글감 창고가 비었어요 — 먼저 원본 수집을 하세요.');
+
+  const drafts = [];
+  for (const m of materials) {
+    const content = (await generateViaClaude(buildRewritePrompt(type, m.content))).trim();
+    drafts.push(addDraft({ type, content, source: '직접소싱' }));
+  }
+  pushLog(`[대시보드] 직접소싱 바로쓰기로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
+  return drafts;
+}
+
+async function handlePasteAction(body) {
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const raw = (body?.text || '').trim();
+  if (!raw) throw new Error('내용을 입력하세요.');
+  const isUrl = /^https?:\/\//.test(raw);
+
+  let content;
+  let source;
+  if (isUrl) {
+    pushLog(`[대시보드] 링크에서 게시물 가져오는 중: ${raw}`);
+    const sourceText = await scrapeThreadsPost(raw);
+    content = (await generateViaClaude(buildRewritePrompt(type, sourceText))).trim();
+    source = '벤치 링크';
+  } else {
+    content = raw; // 직접 쓴 글은 AI를 거치지 않고 그대로 담는다.
+    source = '직접 작성';
+  }
+  const draft = addDraft({ type, content, source });
+  pushLog(`[대시보드] [검수] 탭에 추가됨(${draft.id})`);
+  return draft;
+}
+
+async function handleQueuePublishAction(id) {
+  const items = loadQueue();
+  const item = items.find((d) => d.id === id);
+  if (!item) throw new Error('이미 처리됐거나 없는 항목이에요.');
+  const result = await handleManualPostAction({ text: item.content });
+  removeDraft(id);
+  return result;
+}
+
 async function handleRecheckAction() {
   logs.length = 0; // 재연결하면 로그를 비우고 새로 시작 — 예전 로그와 섞여서 헷갈리지 않게.
   pushLog('[대시보드] 재연결 시작...');
@@ -133,10 +237,10 @@ const NAV_SECTIONS = [
       { id: 'daily', label: '일상글 올리기', ready: true },
       { id: 'shopping', label: '쇼핑글 올리기', ready: false },
       { id: 'schedule', label: '예약', ready: false },
-      { id: 'custom', label: '직접 소싱(커스텀)', ready: false },
+      { id: 'custom', label: '직접 소싱(커스텀)', ready: true },
       { id: 'clone', label: '채널 복제', ready: false },
       { id: 'revenue', label: '수익', ready: false },
-      { id: 'review', label: '검수', ready: false },
+      { id: 'review', label: '검수', ready: true },
       { id: 'toss', label: '토스링크(테스트)', ready: false },
     ],
   },
@@ -347,9 +451,94 @@ const PAGE = () => `<!doctype html>
           <h1 style="font-size:14px">벤치 링크로 바로 만들기</h1>
           <div class="row">
             <input type="text" id="benchUrl" placeholder="벤치 글 URL 붙여넣기 (threads.com/@.../post/...)" />
-            <button data-soon="벤치 링크 변환" style="background:#f59e0b">변환</button>
+            <button id="benchConvertBtn" style="background:#f59e0b">변환</button>
           </div>
-          <div class="sub">마음에 드는 남의 일상글 링크를 넣으면 표현만 바꿔 내 글로 만드는 기능이에요 — 아직 준비 중이에요.</div>
+          <div class="sub">마음에 드는 남의 일상글 링크를 넣으면 표현만 바꿔 [검수] 탭에 담아요. 크롬 창이 잠깐 그 글을 열어봅니다.</div>
+          <div id="benchMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="custom">
+        <div class="card" style="max-width:960px">
+          <h1>🤙 직접 소싱(커스텀)</h1>
+          <div class="sub">스레드에서 직접 찾은 글은 링크를, 내가 쓴 글은 글 그대로 붙여넣어 [검수] 탭에 담습니다. 이 탭의 검색어는 [일상글/쇼핑글 올리기] 탭과 안 섞입니다.</div>
+        </div>
+
+        <div class="card" style="max-width:960px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <h1 style="font-size:14px">📗 일상글 소싱</h1>
+              <div class="row"><input type="text" id="customKwDaily" placeholder="예: 자취 꿀템" /><button class="secondary" id="addKwDailyBtn">추가</button></div>
+              <div id="customKwDailyList" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
+              <div class="actions">
+                <button id="customCollectDailyBtn">📥 내 검색어로 일상글 소싱</button>
+              </div>
+              <div class="sub" id="customMaterialDailyInfo" style="margin-top:6px">글감 창고: 0개</div>
+              <div class="actions" style="margin-top:8px">
+                <button id="customWriteDailyBtn" style="background:#f59e0b">🔶 일상글 바로쓰기</button>
+              </div>
+            </div>
+            <div>
+              <h1 style="font-size:14px">🛒 쇼핑글 소싱</h1>
+              <div class="row"><input type="text" id="customKwShopping" placeholder="예: 다이소 신상" /><button class="secondary" id="addKwShoppingBtn">추가</button></div>
+              <div id="customKwShoppingList" style="font-size:11px;color:#888;margin:4px 0 8px"></div>
+              <div class="actions">
+                <button id="customCollectShoppingBtn" style="background:#2563eb">📥 내 검색어로 쇼핑글 소싱</button>
+              </div>
+              <div class="sub" id="customMaterialShoppingInfo" style="margin-top:6px">글감 창고: 0개</div>
+              <div class="actions" style="margin-top:8px">
+                <button id="customWriteShoppingBtn" style="background:#2563eb">🛍️ 쇼핑글 바로쓰기</button>
+              </div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <select id="customDuration" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="3">3분</option>
+              <option value="5" selected>5분</option>
+              <option value="10">10분</option>
+              <option value="20">20분</option>
+            </select>
+          </div>
+          <div id="customMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:960px">
+          <h1 style="font-size:14px">📊 반응 기준(좋아요·댓글)</h1>
+          <div class="sub">직접 넣은 검색어로 아무거나 담기지 않게 걸러요. 화면에 보이는 숫자 순서로 추정한 값이라 100% 정확하진 않을 수 있어요.</div>
+          <div class="row"><span class="label">일상글 — 좋아요</span><input type="text" id="minLikesDaily" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 또는 댓글</span><input type="text" id="minRepliesDaily" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 (둘 중 하나만 넘으면 통과, 0=제한없음)</span></div>
+          <div class="row"><span class="label">쇼핑글 — 좋아요</span><input type="text" id="minLikesShopping" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 그리고 댓글</span><input type="text" id="minRepliesShopping" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 (둘 다 넘어야 통과)</span></div>
+        </div>
+
+        <div class="card" style="max-width:960px">
+          <h1 style="font-size:14px">🔗 링크·직접 쓴 글 붙여넣기</h1>
+          <div class="sub">쓰레드 글 주소를 넣으면 열어서 표현만 바꿔 담고, 그냥 글을 붙여넣으면 그대로 담습니다.</div>
+          <textarea id="pasteText" rows="4" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="https://www.threads.com/@아이디/post/... 또는 직접 쓴 글"></textarea>
+          <div class="actions">
+            <button id="pasteShoppingBtn" style="background:#2563eb">🛒 쇼핑글로 담기</button>
+            <button id="pasteDailyBtn">💬 일상글로 담기</button>
+          </div>
+          <div id="pasteMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:960px">
+          <h1 style="font-size:14px">📇 키워드 그룹</h1>
+          <div class="sub">🚧 아직 준비 중이에요 — 지금은 위 "내 검색어" 목록만 쓸 수 있어요.</div>
+        </div>
+
+        <div class="card" style="max-width:960px">
+          <h1 style="font-size:14px">✂️ 글쓰기 조건(원본 하나당 몇 개)</h1>
+          <div class="sub">🚧 아직 준비 중이에요 — 지금은 [바로쓰기]를 누른 횟수만큼 하나씩 만들어져요.</div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="review">
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1>🧑‍⚖️ 검수</h1>
+            <button class="secondary" id="reviewRefreshBtn">🔄 새로고침</button>
+          </div>
+          <div class="sub">일상글 바로쓰기·직접소싱·붙여넣기로 담긴 글이 여기 쌓여요. 실제로 게시하려면 [지금 게시]를 누르세요.</div>
+          <div id="reviewList"></div>
         </div>
       </div>
 
@@ -573,6 +762,204 @@ const PAGE = () => `<!doctype html>
       window.open(base + '/dashboard/ai-worker', '_blank');
     });
 
+    document.getElementById('benchConvertBtn').addEventListener('click', async () => {
+      const text = document.getElementById('benchUrl').value.trim();
+      const msgEl = document.getElementById('benchMsg');
+      if (!text) { msgEl.textContent = '❌ 링크를 입력하세요.'; return; }
+      const btn = document.getElementById('benchConvertBtn');
+      btn.disabled = true;
+      msgEl.textContent = '변환 중... (크롬 창이 잠깐 뜰 수 있어요)';
+      try {
+        const res = await fetch('/api/action/paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'daily', text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ [검수] 탭에 담겼어요.';
+        document.getElementById('benchUrl').value = '';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ---- 직접 소싱(커스텀) ----
+    async function loadCustomKeywords() {
+      const res = await fetch('/api/custom-keywords');
+      const data = await res.json();
+      renderKwList('customKwDailyList', data.daily || [], 'daily');
+      renderKwList('customKwShoppingList', data.shopping || [], 'shopping');
+      return data;
+    }
+    function renderKwList(elId, list, type) {
+      const el = document.getElementById(elId);
+      if (!list.length) { el.textContent = '아직 없습니다.'; return; }
+      el.innerHTML = list.map((k) => (
+        '<span style="display:inline-flex;align-items:center;gap:3px;background:#f3f0ff;color:#6d28d9;font-weight:700;padding:2px 8px;border-radius:999px;margin:2px">' +
+        k + '<span data-remove-kw="' + k + '" data-kw-type="' + type + '" style="cursor:pointer;color:#a78bfa">×</span></span>'
+      )).join('');
+    }
+    async function saveKeywordList(type, keywords) {
+      await fetch('/api/action/save-custom-keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, keywords }),
+      });
+      await loadCustomKeywords();
+    }
+    document.getElementById('addKwDailyBtn').addEventListener('click', async () => {
+      const input = document.getElementById('customKwDaily');
+      const kw = input.value.trim();
+      if (!kw) return;
+      const data = await loadCustomKeywords();
+      if (!(data.daily || []).includes(kw)) await saveKeywordList('daily', [...(data.daily || []), kw]);
+      input.value = '';
+    });
+    document.getElementById('addKwShoppingBtn').addEventListener('click', async () => {
+      const input = document.getElementById('customKwShopping');
+      const kw = input.value.trim();
+      if (!kw) return;
+      const data = await loadCustomKeywords();
+      if (!(data.shopping || []).includes(kw)) await saveKeywordList('shopping', [...(data.shopping || []), kw]);
+      input.value = '';
+    });
+    document.addEventListener('click', async (e) => {
+      const el = e.target.closest('[data-remove-kw]');
+      if (!el) return;
+      const type = el.dataset.kwType;
+      const data = await loadCustomKeywords();
+      await saveKeywordList(type, (data[type] || []).filter((k) => k !== el.dataset.removeKw));
+    });
+
+    function pickRandom(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+    async function runCustomCollect(type) {
+      const data = await loadCustomKeywords();
+      const list = data[type] || [];
+      if (!list.length) { document.getElementById('customMsg').textContent = '❌ 먼저 검색어를 추가하세요.'; return; }
+      const keyword = pickRandom(list);
+      const minutes = document.getElementById('customDuration').value;
+      const minLikes = document.getElementById(type === 'daily' ? 'minLikesDaily' : 'minLikesShopping').value;
+      const minReplies = document.getElementById(type === 'daily' ? 'minRepliesDaily' : 'minRepliesShopping').value;
+      document.getElementById('customMsg').textContent = '"' + keyword + '" 수집 등록 중...';
+      try {
+        const res = await fetch('/api/action/custom-collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, keyword, minutes, minLikes, minReplies }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || '실패');
+        document.getElementById('customMsg').textContent = '✅ "' + keyword + '" 수집 등록됨 — [현황] 탭 로그에서 진행상황을 볼 수 있어요.';
+      } catch (err) {
+        document.getElementById('customMsg').textContent = '❌ ' + err.message;
+      }
+    }
+    document.getElementById('customCollectDailyBtn').addEventListener('click', () => runCustomCollect('daily'));
+    document.getElementById('customCollectShoppingBtn').addEventListener('click', () => runCustomCollect('shopping'));
+
+    async function runCustomWrite(type) {
+      const btn = document.getElementById(type === 'daily' ? 'customWriteDailyBtn' : 'customWriteShoppingBtn');
+      btn.disabled = true;
+      document.getElementById('customMsg').textContent = '글 쓰는 중...(클로드 호출이라 몇 초 걸려요)';
+      try {
+        const res = await fetch('/api/action/custom-write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, count: 1 }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        document.getElementById('customMsg').textContent = '✅ [검수] 탭에 새 글이 추가됐어요.';
+      } catch (err) {
+        document.getElementById('customMsg').textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    document.getElementById('customWriteDailyBtn').addEventListener('click', () => runCustomWrite('daily'));
+    document.getElementById('customWriteShoppingBtn').addEventListener('click', () => runCustomWrite('shopping'));
+
+    async function runPaste(type) {
+      const text = document.getElementById('pasteText').value.trim();
+      const msgEl = document.getElementById('pasteMsg');
+      if (!text) { msgEl.textContent = '❌ 내용을 입력하세요.'; return; }
+      msgEl.textContent = '처리 중...';
+      try {
+        const res = await fetch('/api/action/paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ [검수] 탭에 담겼어요.';
+        document.getElementById('pasteText').value = '';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    }
+    document.getElementById('pasteDailyBtn').addEventListener('click', () => runPaste('daily'));
+    document.getElementById('pasteShoppingBtn').addEventListener('click', () => runPaste('shopping'));
+
+    // ---- 검수 ----
+    async function loadReviewQueue() {
+      const res = await fetch('/api/queue');
+      const data = await res.json();
+      const el = document.getElementById('reviewList');
+      if (!data.items.length) {
+        el.innerHTML = '<div class="sub" style="margin-top:10px">검수할 글이 없습니다. [일상글/쇼핑글/직접소싱]에서 먼저 글을 만들어보세요.</div>';
+        return;
+      }
+      el.innerHTML = data.items.map((d) => (
+        '<div class="checkitem"><div class="ci-title">' + (d.type === 'shopping' ? '🛒 쇼핑글' : '💬 일상글') + ' · ' + (d.source || '') + ' · ' + new Date(d.createdAt).toLocaleString('ko-KR') + '</div>' +
+        '<div class="ci-desc" style="white-space:pre-wrap">' + d.content.replace(/</g, '&lt;') + '</div>' +
+        '<div class="actions" style="margin-top:6px">' +
+        '<button data-publish-id="' + d.id + '">지금 게시</button>' +
+        '<button class="secondary" data-remove-id="' + d.id + '">삭제</button>' +
+        '</div></div>'
+      )).join('');
+    }
+    document.getElementById('reviewRefreshBtn').addEventListener('click', loadReviewQueue);
+    document.addEventListener('click', async (e) => {
+      const pubBtn = e.target.closest('[data-publish-id]');
+      if (pubBtn) {
+        pubBtn.disabled = true;
+        pubBtn.textContent = '게시 중...';
+        try {
+          const res = await fetch('/api/action/queue-publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: pubBtn.dataset.publishId }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '실패');
+          await loadReviewQueue();
+        } catch (err) {
+          alert('❌ ' + err.message);
+          pubBtn.disabled = false;
+          pubBtn.textContent = '지금 게시';
+        }
+        return;
+      }
+      const rmBtn = e.target.closest('[data-remove-id]');
+      if (rmBtn) {
+        await fetch('/api/action/queue-remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: rmBtn.dataset.removeId }),
+        });
+        await loadReviewQueue();
+      }
+    });
+
+    document.querySelector('.navitem[data-tab="custom"]').addEventListener('click', loadCustomKeywords);
+    document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
+    loadCustomKeywords();
+
     document.getElementById('checkAcctBtn').addEventListener('click', async () => {
       const btn = document.getElementById('checkAcctBtn');
       btn.disabled = true;
@@ -660,6 +1047,113 @@ function startDashboard() {
           const result = await handleManualPostAction(JSON.parse(body || '{}'));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, ...result }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/custom-collect' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const job = await handleCustomCollectAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, job }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/custom-write' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const drafts = await handleCustomWriteAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, drafts }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/paste' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const draft = await handlePasteAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, draft }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/save-custom-keywords' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const type = parsed?.type === 'shopping' ? 'shopping' : 'daily';
+          const keywords = Array.isArray(parsed?.keywords) ? parsed.keywords.filter((k) => typeof k === 'string' && k.trim()) : [];
+          const data = loadCustomKeywords();
+          data[type] = keywords;
+          saveCustomKeywords(data);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/custom-keywords') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(loadCustomKeywords()));
+      return;
+    }
+    if (req.url === '/api/queue') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ items: loadQueue() }));
+      return;
+    }
+    if (req.url === '/api/action/queue-publish' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const result = await handleQueuePublishAction(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/queue-remove' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          removeDraft(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));
