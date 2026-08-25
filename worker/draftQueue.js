@@ -33,4 +33,24 @@ function removeDraft(id) {
   saveQueue(items);
 }
 
-module.exports = { loadQueue, addDraft, removeDraft };
+// "예약" 탭 — 검수 큐에 있는 글에 게시 시각을 붙인다. 워커의 폴링 루프가 매 사이클마다
+// scheduledAt이 지난 항목을 찾아 자동으로 게시한다(워커가 켜져있는 동안만 동작).
+function scheduleDraft(id, scheduledAt) {
+  const items = loadQueue();
+  const updated = items.map((d) => (d.id === id ? { ...d, scheduledAt } : d));
+  saveQueue(updated);
+  return updated.find((d) => d.id === id);
+}
+
+function unscheduleDraft(id) {
+  const items = loadQueue();
+  const updated = items.map((d) => (d.id === id ? { ...d, scheduledAt: null } : d));
+  saveQueue(updated);
+}
+
+function dueDrafts() {
+  const now = Date.now();
+  return loadQueue().filter((d) => d.scheduledAt && new Date(d.scheduledAt).getTime() <= now);
+}
+
+module.exports = { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, dueDrafts };

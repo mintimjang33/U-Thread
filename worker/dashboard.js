@@ -4,11 +4,12 @@ const path = require('path');
 const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
-const { closeBrowser, scrapeThreadsPost } = require('./collectBenchmark');
+const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts } = require('./collectBenchmark');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
-const { loadQueue, addDraft, removeDraft } = require('./draftQueue');
+const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
 const persona = require('./persona');
+const channelClone = require('./channelClone');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -275,6 +276,60 @@ ${sourceText.slice(0, 800)}
   return { note };
 }
 
+async function handleLearnAccountsAction(body) {
+  const raw = (body?.accounts || '').trim();
+  if (!raw) throw new Error('배울 계정 주소를 넣으세요.');
+  const handles = raw.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 5);
+
+  let allPosts = [];
+  for (const h of handles) {
+    pushLog(`[대시보드] "${h}" 글 배우는 중...`);
+    try {
+      const posts = await scrapeProfilePosts(h, 3);
+      allPosts = allPosts.concat(posts);
+    } catch (err) {
+      pushLog(`[대시보드] "${h}" 배우기 실패(건너뜀): ${err.message}`);
+    }
+  }
+  if (!allPosts.length) throw new Error('배울 수 있는 글을 하나도 못 찾았어요.');
+
+  const prompt = `아래는 여러 쓰레드(Threads) 게시물이다. 이 글들의 공통 패턴(훅 종류 2~3가지, 글 구조 2~3가지, 자주 다루는 주제)을 분석해서 앞으로 새 글을 쓸 때 참고할 수 있게 짧게 요약해라. 설명 없이 요약 결과만 출력해라.
+
+${allPosts.map((p, i) => `--- 게시물 ${i + 1} ---\n${p.slice(0, 500)}`).join('\n\n')}`;
+  const summary = (await generateViaClaude(prompt)).trim();
+  const data = { accounts: handles, summary, samplePosts: allPosts.slice(0, 10) };
+  channelClone.save(data);
+  pushLog(`[대시보드] 채널 복제 학습 완료 (${handles.length}개 계정, 게시물 ${allPosts.length}개)`);
+  return data;
+}
+
+async function handleChannelWriteAction(body) {
+  const data = channelClone.load();
+  if (!data.summary) throw new Error('먼저 계정을 배우세요.');
+  const count = Math.max(1, Math.min(3, Number(body?.count) || 1));
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const personaNote = persona.load().note;
+
+  const samples = data.samplePosts.sort(() => Math.random() - 0.5).slice(0, 2);
+  const drafts = [];
+  for (let i = 0; i < count; i++) {
+    const prompt = `아래는 배운 계정들의 글 패턴 요약과 실제 예시 글이다. 이 패턴(훅 방식, 구조, 주제 성향)을 따라 완전히 새로운 내용의 쓰레드(Threads) 글을 하나 써라. 예시를 베끼지 말고 패턴만 따른다.
+말투 지침: ${personaNote}
+
+[패턴 요약]
+${data.summary}
+
+[예시 글]
+${samples.map((s, idx) => `--- 예시 ${idx + 1} ---\n${s.slice(0, 400)}`).join('\n\n')}
+
+결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).`;
+    const content = (await generateViaClaude(prompt)).trim();
+    drafts.push(addDraft({ type, content, source: '채널복제' }));
+  }
+  pushLog(`[대시보드] 채널 복제로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
+  return drafts;
+}
+
 async function handleRecheckAction() {
   logs.length = 0; // 재연결하면 로그를 비우고 새로 시작 — 예전 로그와 섞여서 헷갈리지 않게.
   pushLog('[대시보드] 재연결 시작...');
@@ -300,9 +355,9 @@ const NAV_SECTIONS = [
       { id: 'status', label: '현황', ready: true },
       { id: 'daily', label: '일상글 올리기', ready: true },
       { id: 'shopping', label: '쇼핑글 올리기', ready: true },
-      { id: 'schedule', label: '예약', ready: false },
+      { id: 'schedule', label: '예약', ready: true },
       { id: 'custom', label: '직접 소싱(커스텀)', ready: true },
-      { id: 'clone', label: '채널 복제', ready: false },
+      { id: 'clone', label: '채널 복제', ready: true },
       { id: 'revenue', label: '수익', ready: true },
       { id: 'review', label: '검수', ready: true },
       { id: 'toss', label: '토스링크(테스트)', ready: true },
@@ -738,6 +793,52 @@ const PAGE = () => `<!doctype html>
             <button id="coupangCheckBtn">🔄 다시 확인</button>
             <button class="secondary" id="coupangOpenBtn">키 등록하러 가기 ↗</button>
           </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="schedule">
+        <div class="card" style="max-width:720px">
+          <h1>⏰ 예약</h1>
+          <div class="sub">[검수] 탭에 있는 글에 게시 시각을 붙여두면, 그 시각에 워커가 자동으로 올려요. 워커가 켜져 있어야 동작해요 — 꺼두면 그 시각이 지나도 안 올라가고, 다시 켜면 밀린 것부터 올라가요.</div>
+          <div class="actions">
+            <button class="secondary" id="scheduleRefreshBtn">🔄 새로고침</button>
+          </div>
+          <div id="scheduleList" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="clone">
+        <div class="card" style="max-width:720px">
+          <h1>🎯 채널 복제 — 이 계정처럼 쓰기</h1>
+          <div class="sub">잘 되는 계정 주소를 넣으면 그 계정의 훅 유형·글 구조·주제를 배워서, 앞으로 쓰는 글이 그 결을 따라가요.</div>
+          <textarea id="cloneAccounts" rows="3" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="https://www.threads.com/@계정1&#10;https://www.threads.com/@계정2&#10;@계정3 (한 줄에 하나씩, 최대 5개)"></textarea>
+          <div class="actions">
+            <button id="cloneLearnBtn">🎯 이 계정들처럼 배우기</button>
+            <button class="secondary" id="cloneResetBtn">초기화</button>
+          </div>
+          <div id="cloneMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">📖 배워 둔 것</h1>
+          <div id="cloneSummary" class="sub">아직 배운 계정이 없어요.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">✍️ 그 결로 글쓰기</h1>
+          <div class="row">
+            <select id="cloneWriteType" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="daily">일상글</option>
+              <option value="shopping">쇼핑글</option>
+            </select>
+            <select id="cloneWriteCount" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="1">1편</option>
+              <option value="2">2편</option>
+              <option value="3">3편</option>
+            </select>
+            <button id="cloneWriteBtn" style="background:#f59e0b">🔶 이 결로 글 만들기</button>
+          </div>
+          <div id="cloneWriteMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
         </div>
       </div>
 
@@ -1368,6 +1469,116 @@ const PAGE = () => `<!doctype html>
       window.open(base + '/onboarding/coupang', '_blank');
     });
 
+    // ---- 예약 ----
+    function toLocalInputValue(iso) {
+      const d = iso ? new Date(iso) : new Date(Date.now() + 30 * 60000);
+      const pad = (n) => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+    async function loadSchedule() {
+      const res = await fetch('/api/queue');
+      const data = await res.json();
+      const el = document.getElementById('scheduleList');
+      if (!data.items.length) {
+        el.innerHTML = '<div class="sub">[검수] 탭에 글이 없어요 — 먼저 글을 만드세요.</div>';
+        return;
+      }
+      el.innerHTML = data.items.map((d) => (
+        '<div class="checkitem"><div class="ci-title">' + (d.type === 'shopping' ? '🛒 쇼핑글' : '💬 일상글') +
+        (d.scheduledAt ? ' · ⏰ ' + new Date(d.scheduledAt).toLocaleString('ko-KR') + ' 예약됨' : ' · 예약 안 됨') + '</div>' +
+        '<div class="ci-desc" style="white-space:pre-wrap">' + d.content.replace(/</g, '&lt;').slice(0, 150) + '</div>' +
+        '<div class="row" style="margin-top:6px">' +
+        '<input type="datetime-local" data-sched-input="' + d.id + '" value="' + toLocalInputValue(d.scheduledAt) + '" style="max-width:220px" />' +
+        '<button data-sched-set="' + d.id + '">예약 설정</button>' +
+        (d.scheduledAt ? '<button class="secondary" data-sched-clear="' + d.id + '">예약 취소</button>' : '') +
+        '</div></div>'
+      )).join('');
+    }
+    document.getElementById('scheduleRefreshBtn').addEventListener('click', loadSchedule);
+    document.addEventListener('click', async (e) => {
+      const setBtn = e.target.closest('[data-sched-set]');
+      if (setBtn) {
+        const input = document.querySelector('[data-sched-input="' + setBtn.dataset.schedSet + '"]');
+        const scheduledAt = new Date(input.value).toISOString();
+        await fetch('/api/action/schedule-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: setBtn.dataset.schedSet, scheduledAt }),
+        });
+        await loadSchedule();
+        return;
+      }
+      const clearBtn = e.target.closest('[data-sched-clear]');
+      if (clearBtn) {
+        await fetch('/api/action/schedule-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: clearBtn.dataset.schedClear, scheduledAt: null }),
+        });
+        await loadSchedule();
+      }
+    });
+    document.querySelector('.navitem[data-tab="schedule"]').addEventListener('click', loadSchedule);
+
+    // ---- 채널 복제 ----
+    async function loadClone() {
+      const res = await fetch('/api/channel-clone');
+      const data = await res.json();
+      document.getElementById('cloneSummary').textContent = data.summary
+        ? '배운 계정: ' + data.accounts.join(', ') + '\n\n' + data.summary
+        : '아직 배운 계정이 없어요.';
+    }
+    document.getElementById('cloneLearnBtn').addEventListener('click', async () => {
+      const accounts = document.getElementById('cloneAccounts').value.trim();
+      const msgEl = document.getElementById('cloneMsg');
+      if (!accounts) { msgEl.textContent = '❌ 계정 주소를 넣으세요.'; return; }
+      const btn = document.getElementById('cloneLearnBtn');
+      btn.disabled = true;
+      msgEl.textContent = '배우는 중... (계정마다 크롬으로 열어봐서 시간이 좀 걸려요)';
+      try {
+        const res = await fetch('/api/action/clone-learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accounts }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 배우기 완료!';
+        await loadClone();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    document.getElementById('cloneResetBtn').addEventListener('click', async () => {
+      await fetch('/api/action/clone-reset', { method: 'POST' });
+      await loadClone();
+    });
+    document.getElementById('cloneWriteBtn').addEventListener('click', async () => {
+      const type = document.getElementById('cloneWriteType').value;
+      const count = document.getElementById('cloneWriteCount').value;
+      const msgEl = document.getElementById('cloneWriteMsg');
+      const btn = document.getElementById('cloneWriteBtn');
+      btn.disabled = true;
+      msgEl.textContent = '쓰는 중...';
+      try {
+        const res = await fetch('/api/action/clone-write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, count }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ [검수] 탭에 추가됐어요.';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    document.querySelector('.navitem[data-tab="clone"]').addEventListener('click', loadClone);
+
     document.querySelector('.navitem[data-tab="custom"]').addEventListener('click', loadCustomKeywords);
     document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
     loadCustomKeywords();
@@ -1607,6 +1818,63 @@ function startDashboard() {
       res.end(JSON.stringify(persona.load()));
       return;
     }
+    if (req.url === '/api/channel-clone') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(channelClone.load()));
+      return;
+    }
+    if (req.url === '/api/action/clone-learn' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleLearnAccountsAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/clone-write' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const drafts = await handleChannelWriteAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, drafts }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/clone-reset' && req.method === 'POST') {
+      const data = channelClone.reset();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ...data }));
+      return;
+    }
+    if (req.url === '/api/action/schedule-draft' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const draft = scheduleDraft(parsed.id, parsed.scheduledAt || null);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, draft }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
     if (req.url === '/api/action/persona-analyze' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => (body += c));
@@ -1769,4 +2037,4 @@ function startDashboard() {
   return { setStatus };
 }
 
-module.exports = { startDashboard, setStatus, pushLog };
+module.exports = { startDashboard, setStatus, pushLog, handleManualPostAction };

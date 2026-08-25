@@ -248,6 +248,48 @@ async function scrapeThreadsPost(url) {
   }
 }
 
+// "채널 복제" 탭용 — 특정 계정의 최근 게시물 여러 개를 텍스트로 모아온다(말투/구조 학습 재료).
+async function scrapeProfilePosts(handleOrUrl, limit = 5) {
+  const executablePath = findChrome();
+  if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
+
+  const url = handleOrUrl.startsWith('http') ? handleOrUrl : `https://www.threads.net/@${handleOrUrl.replace(/^@/, '')}`;
+  const reusingExisting = !!currentBrowser;
+  const browser =
+    currentBrowser ||
+    (currentBrowser = await puppeteer.launch({
+      executablePath,
+      headless: false,
+      userDataDir: PROFILE_DIR,
+      args: ['--no-first-run', '--no-default-browser-check'],
+    }));
+
+  const page = await browser.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const texts = new Set();
+    for (let scroll = 0; scroll < 4 && texts.size < limit; scroll++) {
+      const candidates = (await safeEvaluate(page, (sel) => {
+        return Array.from(document.querySelectorAll(sel.postContainer)).map((el) => el.innerText || '');
+      }, SELECTORS).catch(() => [])) || [];
+      for (const t of candidates) {
+        if (t.trim() && t.length > 20) texts.add(t);
+      }
+      await safeEvaluate(page, () => window.scrollBy(0, window.innerHeight * 1.5)).catch(() => {});
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (!texts.size) throw new Error('게시물을 못 찾았어요 — 계정 주소가 맞는지, 로그인이 돼있는지 확인해주세요.');
+    return Array.from(texts).slice(0, limit);
+  } finally {
+    await page.close().catch(() => {});
+    if (!reusingExisting) {
+      await closeBrowser();
+    }
+  }
+}
+
 async function collectBenchmark(input) {
   const executablePath = findChrome();
   if (!executablePath) throw new Error('크롬을 찾을 수 없습니다.');
@@ -432,4 +474,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, scrapeProfilePosts, MIN_LIKES, MIN_REPLIES };

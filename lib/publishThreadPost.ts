@@ -23,6 +23,10 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
   const createJson = await createRes.json();
   if (!createRes.ok || !createJson.id) throw new Error(createJson.error?.message || JSON.stringify(createJson));
 
+  // Threads Graph API는 컨테이너 생성 직후 바로 발행을 호출하면 아직 처리 중이라 "리소스가
+  // 존재하지 않는다"는 에러를 낸다(실측 확인: 재시도하면 성공함). 짧게 기다린 뒤 발행한다.
+  await new Promise((r) => setTimeout(r, 3000));
+
   const publishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -47,6 +51,7 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
       });
       const segCreateJson = await segCreateRes.json();
       if (!segCreateRes.ok || !segCreateJson.id) break; // 중간 타래 실패시 이후 타래/제휴댓글은 중단(본문 발행은 무효화하지 않음)
+      await new Promise((r) => setTimeout(r, 3000));
       const segPublishRes = await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,6 +78,7 @@ export async function publishThreadPostNow(post: ThreadPost, account: ThreadsAcc
     });
     const replyCreateJson = await replyCreateRes.json();
     if (replyCreateRes.ok && replyCreateJson.id) {
+      await new Promise((r) => setTimeout(r, 3000));
       await fetch(`https://graph.threads.net/v1.0/${account.threads_user_id}/threads_publish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

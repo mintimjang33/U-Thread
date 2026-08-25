@@ -1,8 +1,9 @@
 const { loadConfig } = require('./config');
 const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
 const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
-const { startDashboard, setStatus } = require('./dashboard');
+const { startDashboard, setStatus, handleManualPostAction } = require('./dashboard');
 const { addMaterials } = require('./materials');
+const { dueDrafts, removeDraft } = require('./draftQueue');
 
 const POLL_INTERVAL_MS = 8000;
 let claudeEmail = null;
@@ -50,6 +51,22 @@ async function claimAndRun(config, job) {
   }
 }
 
+// "예약" 탭에서 시각을 붙인 검수 큐 항목을 확인해서, 그 시각이 지났으면 자동으로 게시한다.
+// 워커가 켜져 있는 동안만 동작(꺼져 있으면 안 올라가고, 다시 켜면 밀린 것부터 처리됨).
+async function runScheduledPublish() {
+  const due = dueDrafts();
+  for (const draft of due) {
+    console.log(`[예약] "${draft.content.slice(0, 30)}..." 게시 시각 도달 — 게시 시도`);
+    try {
+      const result = await handleManualPostAction({ text: draft.content });
+      removeDraft(draft.id);
+      console.log(`[예약] ✅ 게시 완료 (threadsPostId: ${result.threadsPostId})`);
+    } catch (err) {
+      console.error(`[예약] 게시 실패(다음 루프에서 재시도):`, err.message);
+    }
+  }
+}
+
 async function pollLoop() {
   startDashboard();
 
@@ -70,6 +87,7 @@ async function pollLoop() {
       for (const job of jobs) {
         await claimAndRun(config, job);
       }
+      await runScheduledPublish();
     } catch (err) {
       console.error('폴링 오류:', err.message);
     }
