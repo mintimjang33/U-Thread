@@ -268,6 +268,43 @@ async function checkLoginStatus(accountId) {
   }
 }
 
+// [계정] 탭 "👁 전체 조회수 갱신"용 — 로그인된 계정의 내 프로필로 들어가 팔로워 수를 읽어온다.
+// 실측 확인(2026-08-26): 홈에서 svg[aria-label="프로필"] 클릭 → 내 프로필로 이동, 본문에
+// "팔로워 N명" 형식으로 찍혀있음. 쓰레드가 게시물 노출수(조회수)는 화면에 안 보여주므로
+// 팔로워 수만 가져온다 — 없는 걸 있는 척 만들지 않는다.
+async function getOwnProfileStats(accountId) {
+  accountId = accountId || accounts.load().activeAccountId;
+  const { browser, reusingExisting } = await getOrLaunchBrowser(accountId);
+
+  const page = await browser.newPage();
+  try {
+    await page.goto('https://www.threads.net/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const clicked = await safeEvaluate(page, () => {
+      const candidates = Array.from(document.querySelectorAll('svg[aria-label="프로필"]'));
+      const target = candidates[candidates.length - 1];
+      if (!target) return false;
+      (target.closest('a,div[role="link"],div[role="button"]') || target.parentElement).click();
+      return true;
+    });
+    if (!clicked) throw new Error('프로필 이동 버튼을 못 찾았어요 — 로그인이 돼있는지 확인해주세요.');
+    await new Promise((r) => setTimeout(r, 2500));
+
+    const handle = (page.url().match(/@([^/?]+)/) || [])[1] || null;
+    const bodyText = await safeEvaluate(page, () => document.body.innerText);
+    const m = bodyText.match(/팔로워\s*([\d,]+(?:\.\d+)?[천만]?)\s*명/);
+    const followers = m ? parseKoreanCount(m[1]) : null;
+    if (followers === null) throw new Error('팔로워 수를 못 읽었어요 — 화면 구조가 바뀐 것 같습니다.');
+    return { handle, followers, checkedAt: new Date().toISOString() };
+  } finally {
+    await page.close().catch(() => {});
+    if (!reusingExisting) {
+      await closeBrowser();
+    }
+  }
+}
+
 // "직접 소싱(커스텀)" 탭의 링크 붙여넣기용 — 쓰레드 게시물 URL 하나를 열어서 본문 텍스트만 뽑아온다.
 async function scrapeThreadsPost(url, accountId) {
   accountId = accountId || accounts.load().activeAccountId;
@@ -502,4 +539,4 @@ async function collectBenchmark(input) {
   }
 }
 
-module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser, MIN_LIKES, MIN_REPLIES };
+module.exports = { collectBenchmark, closeBrowser, checkLoginStatus, getOwnProfileStats, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser, MIN_LIKES, MIN_REPLIES };

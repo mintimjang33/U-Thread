@@ -4,7 +4,7 @@ const path = require('path');
 const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCachedAiSource } = require('./generate');
-const { closeBrowser, collectBenchmark, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
+const { closeBrowser, collectBenchmark, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser, getOwnProfileStats } = require('./collectBenchmark');
 const { scheduleNativePost, postNowViaBrowser } = require('./nativeSchedule');
 const accounts = require('./accounts');
 const { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial, clearUsed } = require('./materials');
@@ -16,6 +16,7 @@ const postLog = require('./postLog');
 const coupangLocal = require('./coupangLocal');
 const autoEngine = require('./autoEngine');
 const defaultKeywords = require('./defaultKeywords');
+const accountStats = require('./accountStats');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -242,6 +243,25 @@ async function handleCheckAccountAction(accountId) {
   const { job } = await res.json();
   pushLog(`[대시보드] "${id}" 계정 연결 확인 작업 등록(${job.id.slice(0, 8)}) — 곧 처리됩니다.`);
   return job;
+}
+
+// [계정] 탭 "👁 전체 조회수 갱신" — 등록된 브라우저 계정을 하나씩 돌며 팔로워 수를 읽어온다.
+// 계정 하나가 실패해도(로그인 안 됨 등) 나머지는 계속 진행한다.
+async function handleRefreshAccountStatsAction() {
+  const accData = accounts.load();
+  const results = {};
+  for (const acct of accData.accounts) {
+    try {
+      const stats = await getOwnProfileStats(acct.id);
+      accountStats.setStats(acct.id, stats);
+      results[acct.id] = stats;
+      pushLog(`[대시보드] "${acct.label}" 팔로워 ${stats.followers}명 확인됨`);
+    } catch (err) {
+      pushLog(`[대시보드] "${acct.label}" 조회수 갱신 실패: ${err.message}`);
+      results[acct.id] = { error: err.message };
+    }
+  }
+  return results;
 }
 
 // "내가 직접 써서 올리기" — 이미 있는 유쓰레드 API 두 개를 그대로 이어붙인다(새로 만든 기능 아님):
@@ -902,6 +922,9 @@ const PAGE = () => `<!doctype html>
           <h1>👤 좋아요·댓글·수집용 브라우저 로그인</h1>
           <div class="sub">이 워커가 조종하는 크롬 프로필별로 쓰레드 계정을 하나씩 연결해요(검색·좋아요·댓글·수집에 씀). 계정을 여러 개 추가할 수 있고, 한 번에 한 계정만 켜져서 동작해요(현재 켠 계정).</div>
           <div class="row"><span class="label">클로드 계정</span><span id="acctClaudeEmail">-</span></div>
+          <div class="actions">
+            <button class="secondary" id="refreshAccountStatsBtn">👁 전체 조회수 갱신</button>
+          </div>
           <div id="browserAccountList" style="margin-top:8px"></div>
           <div class="row" style="margin-top:10px">
             <input type="text" id="newAccountLabel" placeholder="새 계정 이름(예: sub01, 육아계정)" />
@@ -3128,18 +3151,25 @@ const PAGE = () => `<!doctype html>
       const data = await res.json();
       window.__activeAccountId = data.activeAccountId;
       const st = window.__threadsLoginStatus || {};
+      const statsRes = await fetch('/api/account-stats');
+      const statsData = await statsRes.json();
       const el = document.getElementById('browserAccountList');
       el.innerHTML = data.accounts.map((a) => {
         const login = st[a.id];
         const isActive = a.id === data.activeAccountId;
         const dotClass = login === undefined ? 'off' : login.loggedIn ? '' : 'warn';
         const statusText = login === undefined ? '아직 확인 안 함' : login.loggedIn ? '로그인됨 · ' + new Date(login.checkedAt).toLocaleString('ko-KR') : '로그인 안 됨';
+        const stat = statsData[a.id];
+        const statText = stat ? (stat.error ? '👁 갱신 실패: ' + stat.error : '👁 팔로워 ' + stat.followers + '명 · ' + new Date(stat.checkedAt).toLocaleString('ko-KR')) : '👁 아직 조회 안 함';
         return (
           '<div style="border:1px solid ' + (isActive ? '#6d28d9' : '#e5e5e5') + ';border-radius:8px;padding:10px;margin-bottom:6px">' +
           '<div class="row" style="margin-bottom:6px">' +
           '<span class="dot ' + dotClass + '"></span>' +
           '<span style="font-weight:800;min-width:90px">' + a.label + (isActive ? ' (켜짐)' : '') + '</span>' +
           '<span style="font-size:11px;color:#888;flex:1">' + statusText + '</span>' +
+          '</div>' +
+          '<div class="sub" style="margin:0 0 6px">' + statText + '</div>' +
+          '<div class="row" style="margin-bottom:6px">' +
           (isActive ? '' : '<button class="secondary" data-acct-activate="' + a.id + '">이 계정 켜기</button>') +
           '<button class="secondary" data-acct-check="' + a.id + '">로그인 확인</button>' +
           (a.id === 'default' ? '' : '<button class="secondary" data-acct-remove="' + a.id + '">삭제</button>') +
@@ -3260,6 +3290,17 @@ const PAGE = () => `<!doctype html>
     });
     document.querySelector('.navitem[data-tab="account"]').addEventListener('click', loadBrowserAccounts);
     loadBrowserAccounts();
+    document.getElementById('refreshAccountStatsBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('refreshAccountStatsBtn');
+      btn.disabled = true;
+      btn.textContent = '갱신 중...(계정마다 크롬으로 열어봐서 시간이 좀 걸려요)';
+      try {
+        await fetch('/api/action/refresh-account-stats', { method: 'POST' });
+      } catch {}
+      btn.disabled = false;
+      btn.textContent = '👁 전체 조회수 갱신';
+      await loadBrowserAccounts();
+    });
 
     // ---- 오늘 활동 / 계정별 현황 ----
     window.__viewAccountFilter = 'all';
@@ -4377,6 +4418,23 @@ function startDashboard() {
             res.end(JSON.stringify({ error: err.message }));
           });
       });
+      return;
+    }
+    if (req.url === '/api/account-stats') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(accountStats.load()));
+      return;
+    }
+    if (req.url === '/api/action/refresh-account-stats' && req.method === 'POST') {
+      handleRefreshAccountStatsAction()
+        .then((results) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, results }));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
       return;
     }
     if (req.url === '/api/action/shutdown' && req.method === 'POST') {
