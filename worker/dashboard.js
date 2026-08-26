@@ -13,6 +13,7 @@ const tossLinks = require('./tossLinks');
 const persona = require('./persona');
 const channelClone = require('./channelClone');
 const postLog = require('./postLog');
+const coupangLocal = require('./coupangLocal');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -115,6 +116,54 @@ async function handleKeyStatus(provider) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '조회 실패');
+  return data;
+}
+
+async function handleCoupangSaveKeysAction(body) {
+  const accessKey = (body?.accessKey || '').trim();
+  const secretKey = (body?.secretKey || '').trim();
+  if (!accessKey || !secretKey) throw new Error('ACCESS KEY와 SECRET KEY를 모두 입력하세요.');
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ provider: 'COUPANG', values: { accessKey, secretKey } }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '저장 실패');
+  pushLog('[대시보드] 쿠팡파트너스 API 키 저장됨');
+  return data;
+}
+
+async function handleCoupangDeleteKeysAction() {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/keys?provider=COUPANG', {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '삭제 실패');
+  pushLog('[대시보드] 쿠팡파트너스 API 키 삭제됨');
+  return data;
+}
+
+async function handleCoupangTestAction() {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/worker/coupang-test', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '연결 테스트 실패');
+  return data;
+}
+
+async function handleCoupangSetPartnerAction(body) {
+  const data = coupangLocal.setPartnerId(body?.raw);
+  pushLog(`[대시보드] 쿠팡 파트너스 ID 저장됨: ${data.partnerId}`);
   return data;
 }
 
@@ -1116,12 +1165,44 @@ const PAGE = () => `<!doctype html>
       <div class="tab-panel" data-panel="coupang">
         <div class="card" style="max-width:720px">
           <h1>🛍️ 쿠파스 API 연결</h1>
-          <div class="sub">쿠팡 파트너스 키는 유쓰레드 웹 대시보드에서 등록해요(암호화 저장이라 이 로컬 워커에서는 직접 입력하지 않아요). 여기서는 등록 여부만 확인할 수 있어요.</div>
-          <div class="row"><span class="label">등록 상태</span><span id="coupangKeyStatus">확인 중...</span></div>
-          <div class="actions" style="margin-top:8px">
-            <button id="coupangCheckBtn">🔄 다시 확인</button>
-            <button class="secondary" id="coupangOpenBtn">키 등록하러 가기 ↗</button>
+          <div class="sub">쿠팡 파트너스 키를 넣는 곳이에요. 글쓰기 AI(클로드 구독)는 첫 화면 "✅ 시작하기 전에"에서 설치·로그인·확인까지 끝나니 여기서 하실 일은 없습니다.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">🛒 쿠팡 파트너스 API</h1>
+            <span id="coupangKeyBadge" style="background:#f3f4f6;color:#6b7280;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px">확인 중...</span>
           </div>
+          <div class="sub">넣으면 수익 리포트(클릭·전환 수수료)와 상품 자동 검색이 켜집니다. 안 넣어도 글은 만들어집니다 — 그때는 링크를 직접 넣으시면 됩니다.</div>
+          <input type="text" id="coupangAccessKey" placeholder="ACCESS KEY" style="margin-top:8px;width:100%;box-sizing:border-box" />
+          <input type="text" id="coupangSecretKey" placeholder="SECRET KEY" style="margin-top:8px;width:100%;box-sizing:border-box" />
+          <div class="actions" style="margin-top:8px">
+            <a href="https://partners.coupang.com/#affiliate/ws" target="_blank" style="flex:1"><button class="secondary" style="width:100%">키 발급 페이지 열기</button></a>
+            <button id="coupangSaveBtn" style="flex:1">🔑 저장</button>
+          </div>
+          <div class="actions" style="margin-top:6px">
+            <button class="secondary" id="coupangTestBtn" style="width:100%">🔑 연결 테스트</button>
+            <button class="secondary" id="coupangDeleteBtn" style="width:100%">🗑 키 지우기</button>
+          </div>
+          <div id="coupangMsg" class="sub" style="margin-top:6px;min-height:16px"></div>
+          <div class="sub" style="color:#b45309">⚠️ 파트너스 오픈API 승인을 받아야 키가 나옵니다. 승인 전이면 링크를 직접 넣어 쓰세요.</div>
+          <div class="sub" style="color:#b45309">⚠️ 키는 비밀번호와 같습니다. 다른 사람에게 보여주지 마세요.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🔍 쿠팡 링크 진단</h1>
+          <div id="coupangDiagStatus" class="sub">쿠팡 파트너스 API 키가 없습니다</div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="coupangPartnerInput" placeholder="내 파트너스 ID 또는 내 링크를 붙여넣으세요 (예: AF4468131)" />
+            <button id="coupangPartnerSaveBtn">저장</button>
+          </div>
+          <div class="sub">파트너스에서 만든 내 링크를 브라우저로 열면 주소에 lptag=AF0000000 이 보입니다. 그 값을 넣으세요. 링크를 통째로 붙여넣어도 알아서 뽑아냅니다. 오픈API 키가 있으면 자동으로 채워지므로 이 칸은 비워 두어도 됩니다.</div>
+          <div class="row" style="margin-top:10px">
+            <input type="text" id="coupangDiagInput" placeholder="쿠팡 링크(또는 링크가 섞인 문장)를 붙여넣으세요" />
+            <button id="coupangDiagBtn">진단</button>
+          </div>
+          <div class="sub">쿠팡 파트너스는 본인·가족 구매를 수수료에서 제외합니다. 내가 직접 사서 전환을 확인하는 방법으로는 링크가 정상인지 알 수 없어요 — 이 진단으로 확인하세요.</div>
+          <div id="coupangDiagResult" class="sub" style="margin-top:8px;min-height:16px"></div>
         </div>
       </div>
 
@@ -2203,11 +2284,114 @@ const PAGE = () => `<!doctype html>
     });
     document.getElementById('revenueTableRefreshBtn').addEventListener('click', buildRevenueTable);
     buildRevenueTable();
-    document.querySelector('.navitem[data-tab="coupang"]').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
-    document.getElementById('coupangCheckBtn').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
-    document.getElementById('coupangOpenBtn').addEventListener('click', () => {
-      const base = window.__apiBase || 'https://u-thread.vercel.app';
-      window.open(base + '/onboarding/coupang', '_blank');
+    // ---- 쿠파스 API 연결 ----
+    let coupangHasKey = false;
+    async function loadCoupangKeyBadge() {
+      const badge = document.getElementById('coupangKeyBadge');
+      badge.textContent = '확인 중...';
+      try {
+        const res = await fetch('/api/key-status?provider=COUPANG');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        coupangHasKey = !!data.hasKey;
+        badge.textContent = coupangHasKey ? '등록됨' : '미등록';
+        badge.style.background = coupangHasKey ? '#dcfce7' : '#f3f4f6';
+        badge.style.color = coupangHasKey ? '#166534' : '#6b7280';
+        document.getElementById('coupangDiagStatus').textContent = coupangHasKey ? '✅ 쿠팡 파트너스 API 키가 등록돼 있어요' : '쿠팡 파트너스 API 키가 없습니다';
+      } catch (err) {
+        badge.textContent = '❌ ' + err.message;
+      }
+    }
+    async function loadCoupangPartner() {
+      try {
+        const res = await fetch('/api/coupang-local');
+        const data = await res.json();
+        if (data.partnerId) document.getElementById('coupangPartnerInput').value = data.partnerId;
+      } catch {}
+    }
+    document.querySelector('.navitem[data-tab="coupang"]').addEventListener('click', () => {
+      loadCoupangKeyBadge();
+      loadCoupangPartner();
+    });
+    document.getElementById('coupangSaveBtn').addEventListener('click', async () => {
+      const accessKey = document.getElementById('coupangAccessKey').value.trim();
+      const secretKey = document.getElementById('coupangSecretKey').value.trim();
+      const msgEl = document.getElementById('coupangMsg');
+      if (!accessKey || !secretKey) { msgEl.textContent = '❌ ACCESS KEY와 SECRET KEY를 모두 입력하세요.'; return; }
+      msgEl.textContent = '저장 중...';
+      try {
+        const res = await fetch('/api/action/coupang-save-keys', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accessKey, secretKey }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 저장했어요.';
+        document.getElementById('coupangAccessKey').value = '';
+        document.getElementById('coupangSecretKey').value = '';
+        await loadCoupangKeyBadge();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('coupangTestBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('coupangMsg');
+      msgEl.textContent = '연결 테스트 중...';
+      try {
+        const res = await fetch('/api/action/coupang-test', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 연결 성공' + (data.sample ? ' (예시 상품: ' + data.sample + ')' : '');
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('coupangDeleteBtn').addEventListener('click', async () => {
+      if (!confirm('저장된 쿠팡 파트너스 API 키를 지울까요?')) return;
+      const msgEl = document.getElementById('coupangMsg');
+      try {
+        const res = await fetch('/api/action/coupang-delete-keys', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '🗑 지웠어요.';
+        await loadCoupangKeyBadge();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('coupangPartnerSaveBtn').addEventListener('click', async () => {
+      const raw = document.getElementById('coupangPartnerInput').value.trim();
+      try {
+        const res = await fetch('/api/action/coupang-set-partner', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raw }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        document.getElementById('coupangPartnerInput').value = data.partnerId;
+        document.getElementById('coupangDiagResult').textContent = '✅ 내 파트너스 ID 저장됨: ' + data.partnerId;
+      } catch (err) {
+        document.getElementById('coupangDiagResult').textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('coupangDiagBtn').addEventListener('click', async () => {
+      const text = document.getElementById('coupangDiagInput').value.trim();
+      const resultEl = document.getElementById('coupangDiagResult');
+      if (!text) { resultEl.textContent = '❌ 링크(또는 링크가 섞인 문장)를 입력하세요.'; return; }
+      const urlMatch = text.match(/https?:\\/\\/[^\\s]*(?:coupang\\.com|coupa\\.ng)[^\\s]*/i);
+      if (!urlMatch) { resultEl.textContent = '❌ 쿠팡 링크를 찾지 못했어요.'; return; }
+      const url = urlMatch[0];
+      let lptag = null;
+      try { lptag = new URL(url).searchParams.get('lptag'); } catch {}
+      let partnerId = null;
+      try {
+        const res = await fetch('/api/coupang-local');
+        const data = await res.json();
+        partnerId = data.partnerId;
+      } catch {}
+      if (!lptag) {
+        resultEl.textContent = '⚠️ 링크는 찾았지만 lptag가 없어요 — 파트너스 링크가 아니거나 수수료가 안 붙는 일반 링크일 수 있어요.';
+      } else if (!partnerId) {
+        resultEl.textContent = '🔎 lptag=' + lptag + ' 을 찾았어요. 위에서 내 파트너스 ID를 먼저 저장하면 내 링크인지 비교해드려요.';
+      } else if (lptag === partnerId) {
+        resultEl.textContent = '✅ 내 파트너스 ID(' + partnerId + ')로 정상 발급된 링크예요.';
+      } else {
+        resultEl.textContent = '❌ 이 링크의 lptag(' + lptag + ')가 내 ID(' + partnerId + ')와 달라요 — 다른 사람 링크일 수 있어요.';
+      }
     });
 
     // ---- 예약 ----
@@ -3200,6 +3384,65 @@ function startDashboard() {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));
         });
+      return;
+    }
+    if (req.url === '/api/coupang-local') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(coupangLocal.load()));
+      return;
+    }
+    if (req.url === '/api/action/coupang-save-keys' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleCoupangSaveKeysAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/coupang-delete-keys' && req.method === 'POST') {
+      handleCoupangDeleteKeysAction()
+        .then((data) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+      return;
+    }
+    if (req.url === '/api/action/coupang-test' && req.method === 'POST') {
+      handleCoupangTestAction()
+        .then((data) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+      return;
+    }
+    if (req.url === '/api/action/coupang-set-partner' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleCoupangSetPartnerAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     if (req.url.startsWith('/api/action/toss-') && req.method === 'POST') {

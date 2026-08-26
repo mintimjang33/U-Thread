@@ -25,8 +25,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+  const workerUserId = await getWorkerUserId(request);
+  const user = workerUserId ? null : await getCurrentUser();
+  const userId = workerUserId || user?.id;
+  if (!userId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
 
   const body = await request.json().catch(() => null);
   if (!body?.provider || !body?.values) {
@@ -41,7 +43,28 @@ export async function POST(request: Request) {
   const supabase = getSupabaseServerClient();
   const { error } = await supabase
     .from('ut_api_keys_vault')
-    .upsert({ user_id: user.id, provider: body.provider, encrypted_values: encrypted }, { onConflict: 'user_id,provider' });
+    .upsert({ user_id: userId, provider: body.provider, encrypted_values: encrypted }, { onConflict: 'user_id,provider' });
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(request: Request) {
+  const workerUserId = await getWorkerUserId(request);
+  const user = workerUserId ? null : await getCurrentUser();
+  const userId = workerUserId || user?.id;
+  if (!userId) return NextResponse.json({ error: '로그인이 필요합니다.' }, { status: 401 });
+
+  const { searchParams } = new URL(request.url);
+  const provider = searchParams.get('provider');
+  if (!provider) return NextResponse.json({ error: 'provider가 필요합니다.' }, { status: 400 });
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from('ut_api_keys_vault')
+    .delete()
+    .eq('user_id', userId)
+    .eq('provider', provider);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true });
