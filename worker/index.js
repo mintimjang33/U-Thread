@@ -1,5 +1,5 @@
 const { loadConfig } = require('./config');
-const { generateViaClaude, getClaudeAccountEmail } = require('./generate');
+const { generateViaClaude, getClaudeAccountEmail, loadAiSource } = require('./generate');
 const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
 const { startDashboard, setStatus, handleManualPostAction, setThreadsLoginStatus } = require('./dashboard');
 const { addMaterials } = require('./materials');
@@ -80,6 +80,7 @@ async function pollLoop() {
 
   setStatus({ apiBase: config.apiBase });
   claudeEmail = await getClaudeAccountEmail();
+  await loadAiSource();
   setStatus({ state: 'running', claudeEmail });
   console.log(`유쓰레드 로컬 워커 시작 — ${config.apiBase}${claudeEmail ? ` (클로드 계정: ${claudeEmail})` : ' (클로드 계정 확인 안 됨 — claude auth login 필요)'}`);
   while (true) {

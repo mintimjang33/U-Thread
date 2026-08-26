@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { loadConfig } = require('./config');
-const { getClaudeAccountEmail, generateViaClaude } = require('./generate');
+const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCachedAiSource } = require('./generate');
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
 const { scheduleNativePost } = require('./nativeSchedule');
 const accounts = require('./accounts');
@@ -240,7 +240,7 @@ async function handleCustomWriteAction(body) {
 
   const drafts = [];
   for (const m of materials) {
-    const content = (await generateViaClaude(buildRewritePrompt(type, m.content))).trim();
+    const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
     drafts.push(addDraft({ type, content, source: '직접소싱' }));
   }
   pushLog(`[대시보드] 직접소싱 바로쓰기로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
@@ -259,7 +259,7 @@ async function handlePasteAction(body) {
   if (isUrl) {
     pushLog(`[대시보드] 링크에서 게시물 가져오는 중: ${raw}`);
     const sourceText = await scrapeThreadsPost(raw, accountId);
-    content = (await generateViaClaude(buildRewritePrompt(type, sourceText))).trim();
+    content = (await generateContent(buildRewritePrompt(type, sourceText))).trim();
     source = '벤치 링크';
   } else {
     content = raw; // 직접 쓴 글은 AI를 거치지 않고 그대로 담는다.
@@ -314,7 +314,7 @@ async function handleQueueRewriteAllAction() {
     if (!count) continue;
     const materials = takeUnusedMaterials(type, count);
     for (const m of materials) {
-      const content = (await generateViaClaude(buildRewritePrompt(type, m.content))).trim();
+      const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
       drafts.push(addDraft({ type, content, source: '전체 다시쓰기' }));
     }
     if (materials.length < count) {
@@ -336,7 +336,7 @@ async function handlePersonaAnalyzeAction(body) {
 ===게시물 시작===
 ${sourceText.slice(0, 800)}
 ===게시물 끝===`;
-  const note = (await generateViaClaude(prompt)).trim();
+  const note = (await generateContent(prompt)).trim();
   persona.save({ note, sourceHandle: raw });
   pushLog(`[대시보드] 페르소나 적용됨: ${note.slice(0, 60)}...`);
   return { note };
@@ -362,7 +362,7 @@ async function handleLearnAccountsAction(body) {
   const prompt = `아래는 여러 쓰레드(Threads) 게시물이다. 이 글들의 공통 패턴(훅 종류 2~3가지, 글 구조 2~3가지, 자주 다루는 주제)을 분석해서 앞으로 새 글을 쓸 때 참고할 수 있게 짧게 요약해라. 설명 없이 요약 결과만 출력해라.
 
 ${allPosts.map((p, i) => `--- 게시물 ${i + 1} ---\n${p.slice(0, 500)}`).join('\n\n')}`;
-  const summary = (await generateViaClaude(prompt)).trim();
+  const summary = (await generateContent(prompt)).trim();
   const data = { accounts: handles, summary, samplePosts: allPosts.slice(0, 10) };
   channelClone.save(data);
   pushLog(`[대시보드] 채널 복제 학습 완료 (${handles.length}개 계정, 게시물 ${allPosts.length}개)`);
@@ -389,7 +389,7 @@ ${data.summary}
 ${samples.map((s, idx) => `--- 예시 ${idx + 1} ---\n${s.slice(0, 400)}`).join('\n\n')}
 
 결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).`;
-    const content = (await generateViaClaude(prompt)).trim();
+    const content = (await generateContent(prompt)).trim();
     drafts.push(addDraft({ type, content, source: '채널복제' }));
   }
   pushLog(`[대시보드] 채널 복제로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
@@ -505,7 +505,16 @@ const PAGE = () => `<!doctype html>
 <body>
   <div class="shell">
     <div class="sidebar">
-      <div class="brand">🧵 유쓰레드 워커<div class="sub">로컬 자동화</div></div>
+      <div class="brand">🧵 유쓰레드 워커
+        <span style="background:#f3f0ff;color:#6d28d9;font-size:10px;font-weight:800;padding:1px 6px;border-radius:999px;margin-left:4px">v${require('./package.json').version}</span>
+        <div class="sub">로컬 자동화</div>
+      </div>
+      <div style="position:relative;margin:0 12px 12px">
+        <button id="acctSwitcherBtn" class="secondary" style="width:100%;text-align:left;display:flex;align-items:center;gap:6px">
+          🎯 <span id="acctSwitcherLabel" style="flex:1">전체 계정</span> ▾
+        </button>
+        <div id="acctSwitcherMenu" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e5e5e5;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.1);z-index:20;margin-top:4px;overflow:hidden"></div>
+      </div>
       ${NAV_SECTIONS.map(
         (sec) => `
         <div class="navsec">
@@ -528,6 +537,8 @@ const PAGE = () => `<!doctype html>
           <div class="sub">계정이 얼마나 컸는지 확인해요. 급하게 쇼핑글부터 올리면 계정이 막혀요 — 일상글로 1주일 예열한 다음 쇼핑글로 넘어가세요.</div>
           <div class="steps" id="stepRow"></div>
         </div>
+
+        <div class="card" style="max-width:720px" id="aiSourceCard"></div>
 
         <div class="card" style="max-width:720px" id="checklistCard"></div>
 
@@ -582,6 +593,7 @@ const PAGE = () => `<!doctype html>
           <div id="browserAccountList" style="margin-top:8px"></div>
           <div class="row" style="margin-top:10px">
             <input type="text" id="newAccountLabel" placeholder="새 계정 이름(예: sub01, 육아계정)" />
+            <input type="text" id="newAccountNote" placeholder="메모(예: 자취꿀템 소개하는 20대, 선택)" />
             <button id="addAccountBtn">+ 계정 추가</button>
           </div>
           <div id="acctMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;"></div>
@@ -1019,6 +1031,7 @@ const PAGE = () => `<!doctype html>
           title: '✅ 브라우저(구글 크롬)',
           desc: '구글 크롬 사용',
           hint: '',
+          numbered: true,
         },
         {
           ok: acctDone,
@@ -1026,21 +1039,45 @@ const PAGE = () => `<!doctype html>
           desc: acctDone ? '로그인된 계정이 있습니다.' : '로그인된 계정이 없습니다. 안 하면: 연결 전까지는 글을 만들 수는 있어도 올릴 수는 없습니다.',
           hint: acctDone ? '' : '☞ 아래 버튼을 눌러 [계정] 탭으로 가서 "지금 확인하기"를 누르면 뜨는 크롬 창에서 평소처럼 쓰레드에 로그인하면 끝입니다.',
           goToTab: acctDone ? null : 'account',
+          numbered: true,
+        },
+        {
+          ok: true,
+          title: '✅ 저장 공간 — 아직 없음',
+          desc: '만든 이미지·영상을 모아두는 곳이에요. 지금은 안 써도 글쓰기·게시에 문제없어요.',
+          hint: '',
+          numbered: true,
         },
       ];
+      const canPostNow = aiDone && browserDone && acctDone;
+      const blocker = !aiDone ? '클로드 연결' : !acctDone ? '계정 연결' : '';
+      items.push({
+        ok: canPostNow,
+        title: (canPostNow ? '✅' : '❌') + ' 지금 글을 올릴 수 있나 — ' + (canPostNow ? '예' : '아니요 — ' + blocker + '이 아직입니다'),
+        desc: '위 항목이 모두 ✅ 여야 글이 실제로 올라갑니다.',
+        hint: canPostNow ? '' : '☞ 위에서 ❌ 표시된 항목을 먼저 해결해 주세요.',
+        numbered: true,
+      });
       const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+      let numberIdx = 1; // 클로드 항목은 원본에서 번호가 안 보여서 1번 자리로 치고 시작
       document.getElementById('checklistCard').innerHTML =
         '<h1 style="font-size:14px">시작하기 전에 — 아래 순서대로만 하면 됩니다</h1>' +
         '<div class="sub" style="margin-bottom:10px">✅는 이미 끝난 것이니 넘어가세요. ❌만 위에서부터 차례로 해결하면 됩니다.</div>' +
-        items.map((it, i) => (
-          '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center">' +
-          '<div class="ci-title">' + (circled[i] || (i + 1) + '.') + ' ' + it.title + '</div>' +
-          (it.goToTab ? '<button class="secondary" data-goto-tab="' + it.goToTab + '" style="flex-shrink:0">' + '계정 탭 열기' + '</button>' : '') +
-          '</div>' +
-          '<div class="ci-desc">' + it.desc + '</div>' +
-          (it.hint ? '<div class="ci-hint">' + it.hint + '</div>' : '') + '</div>'
-        )).join('');
+        items.map((it) => {
+          const label = it.numbered ? (circled[numberIdx++] || (numberIdx + 1) + '.') + ' ' : '';
+          return (
+            '<div class="checkitem ' + (it.ok ? 'ok' : 'bad') + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center">' +
+            '<div class="ci-title">' + label + it.title + '</div>' +
+            (it.goToTab ? '<button class="secondary" data-goto-tab="' + it.goToTab + '" style="flex-shrink:0">' + '계정 탭 열기' + '</button>' : '') +
+            '</div>' +
+            '<div class="ci-desc">' + it.desc + '</div>' +
+            (it.hint ? '<div class="ci-hint">' + it.hint + '</div>' : '') + '</div>'
+          );
+        }).join('') +
+        '<div class="actions" style="margin-top:10px"><button id="checklistRecheckBtn" class="secondary">다 했어요 · 다시 확인</button></div>';
+      const recheckBtn = document.getElementById('checklistRecheckBtn');
+      if (recheckBtn) recheckBtn.addEventListener('click', () => document.getElementById('recheckBtn').click());
     }
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-goto-tab]');
@@ -1048,6 +1085,48 @@ const PAGE = () => `<!doctype html>
       const nav = document.querySelector('.navitem[data-tab="' + btn.dataset.gotoTab + '"]');
       if (nav) nav.click();
     });
+
+    // ---- AI 바꾸기(클로드 구독 / 제미나이 API) ----
+    async function loadAiSourceUI() {
+      const res = await fetch('/api/ai-source');
+      const data = await res.json();
+      const src = data.aiSource;
+      const btn = (id, label, active, disabled) => (
+        '<button class="secondary" data-ai-source="' + id + '"' + (disabled ? ' disabled' : '') +
+        ' style="' + (active ? 'background:#6d28d9;color:#fff;border-color:#6d28d9' : disabled ? 'opacity:.4' : '') + '">' +
+        label + '</button>'
+      );
+      document.getElementById('aiSourceCard').innerHTML =
+        '<div class="row" style="justify-content:space-between;margin-bottom:2px">' +
+        '<span>🤖 AI 바꾸기</span>' +
+        '</div>' +
+        '<div class="sub" style="margin-bottom:10px">클로드는 구독 안에서 무료, 제미나이는 API를 부를 때마다 과금돼요.</div>' +
+        '<div class="actions">' +
+        btn('worker', '클로드(무료)', src === 'worker', false) +
+        btn('codex', '코덱스', false, true) +
+        btn('gemini', '제미나이(과금)', src === 'gemini', false) +
+        '</div>' +
+        '<div id="aiSourceMsg" style="font-size:12px;color:#6d28d9;margin-top:6px;min-height:16px"></div>';
+    }
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-ai-source]');
+      if (!btn || btn.disabled) return;
+      const msgEl = document.getElementById('aiSourceMsg');
+      if (msgEl) msgEl.textContent = '바꾸는 중...';
+      try {
+        const res = await fetch('/api/action/ai-source-set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source: btn.dataset.aiSource }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        await loadAiSourceUI();
+      } catch (err) {
+        if (msgEl) msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    loadAiSourceUI();
 
     async function tick() {
       try {
@@ -1841,28 +1920,49 @@ const PAGE = () => `<!doctype html>
         const dotClass = login === undefined ? 'off' : login.loggedIn ? '' : 'warn';
         const statusText = login === undefined ? '아직 확인 안 함' : login.loggedIn ? '로그인됨 · ' + new Date(login.checkedAt).toLocaleString('ko-KR') : '로그인 안 됨';
         return (
-          '<div class="row" style="border:1px solid ' + (isActive ? '#6d28d9' : '#e5e5e5') + ';border-radius:8px;padding:10px;margin-bottom:6px">' +
+          '<div style="border:1px solid ' + (isActive ? '#6d28d9' : '#e5e5e5') + ';border-radius:8px;padding:10px;margin-bottom:6px">' +
+          '<div class="row" style="margin-bottom:6px">' +
           '<span class="dot ' + dotClass + '"></span>' +
           '<span style="font-weight:800;min-width:90px">' + a.label + (isActive ? ' (켜짐)' : '') + '</span>' +
           '<span style="font-size:11px;color:#888;flex:1">' + statusText + '</span>' +
           (isActive ? '' : '<button class="secondary" data-acct-activate="' + a.id + '">이 계정 켜기</button>') +
           '<button class="secondary" data-acct-check="' + a.id + '">로그인 확인</button>' +
           (a.id === 'default' ? '' : '<button class="secondary" data-acct-remove="' + a.id + '">삭제</button>') +
+          '</div>' +
+          '<div class="row" style="margin:0">' +
+          '<input type="text" data-note-for="' + a.id + '" value="' + (a.note || '').replace(/"/g, '&quot;') + '" placeholder="메모(예: 자취꿀템 소개하는 20대)" style="font-size:11px" />' +
+          '<button class="secondary" data-note-save="' + a.id + '" style="font-size:11px">메모 저장</button>' +
+          '</div>' +
           '</div>'
         );
       }).join('');
     }
+    document.addEventListener('click', async (e) => {
+      const saveBtn = e.target.closest('[data-note-save]');
+      if (!saveBtn) return;
+      const input = document.querySelector('[data-note-for="' + saveBtn.dataset.noteSave + '"]');
+      await fetch('/api/action/browser-account-note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: saveBtn.dataset.noteSave, note: input.value }),
+      });
+      await loadBrowserAccounts();
+      await loadAccountSwitcher();
+    });
     document.getElementById('addAccountBtn').addEventListener('click', async () => {
       const label = document.getElementById('newAccountLabel').value.trim();
+      const note = document.getElementById('newAccountNote').value.trim();
       if (!label) { document.getElementById('acctMsg').textContent = '❌ 계정 이름을 입력하세요.'; return; }
       await fetch('/api/action/browser-account-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label }),
+        body: JSON.stringify({ label, note }),
       });
       document.getElementById('newAccountLabel').value = '';
+      document.getElementById('newAccountNote').value = '';
       document.getElementById('acctMsg').textContent = '✅ 계정이 추가됐어요. "이 계정 켜기" 후 원본 수집을 돌리면 그 크롬 창에서 로그인하면 돼요.';
       await loadBrowserAccounts();
+      await loadAccountSwitcher();
     });
     document.addEventListener('click', async (e) => {
       const actBtn = e.target.closest('[data-acct-activate]');
@@ -1907,11 +2007,13 @@ const PAGE = () => `<!doctype html>
     loadBrowserAccounts();
 
     // ---- 오늘 활동 / 계정별 현황 ----
+    window.__viewAccountFilter = 'all';
     async function loadActivitySummary() {
       const res = await fetch('/api/activity-summary');
       const data = await res.json();
-      renderTodayActivity(data.accounts);
-      renderAccountStatus(data.accounts);
+      const filtered = window.__viewAccountFilter === 'all' ? data.accounts : data.accounts.filter((a) => a.id === window.__viewAccountFilter);
+      renderTodayActivity(filtered);
+      renderAccountStatus(filtered);
     }
     function renderTodayActivity(accts) {
       const active = accts.filter((a) => a.dailyToday + a.shoppingToday > 0);
@@ -1942,6 +2044,52 @@ const PAGE = () => `<!doctype html>
     document.getElementById('todayActivityRefreshBtn').addEventListener('click', loadActivitySummary);
     document.getElementById('accountStatusRefreshBtn').addEventListener('click', loadActivitySummary);
     loadActivitySummary();
+
+    // ---- 사이드바 계정 스위처(전체 계정 / 계정별 보기) ----
+    async function loadAccountSwitcher() {
+      const res = await fetch('/api/browser-accounts');
+      const data = await res.json();
+      const menu = document.getElementById('acctSwitcherMenu');
+      const rows = [{ id: 'all', label: '전체 계정', note: '' }, ...data.accounts];
+      menu.innerHTML = rows.map((a) => (
+        '<div data-switch-acct="' + a.id + '" style="padding:9px 12px;cursor:pointer;font-size:13px;' +
+        (a.id === window.__viewAccountFilter ? 'background:#f3f0ff;color:#6d28d9;font-weight:800' : '') + '">' +
+        a.label + (a.note ? ' <span style="color:#aaa;font-weight:400">· ' + a.note + '</span>' : '') +
+        '</div>'
+      )).join('');
+      const current = rows.find((a) => a.id === window.__viewAccountFilter) || rows[0];
+      document.getElementById('acctSwitcherLabel').textContent = current.label;
+    }
+    document.getElementById('acctSwitcherBtn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const menu = document.getElementById('acctSwitcherMenu');
+      const willOpen = menu.style.display === 'none';
+      if (willOpen) await loadAccountSwitcher();
+      menu.style.display = willOpen ? 'block' : 'none';
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#acctSwitcherMenu') && !e.target.closest('#acctSwitcherBtn')) {
+        document.getElementById('acctSwitcherMenu').style.display = 'none';
+      }
+    });
+    document.addEventListener('click', async (e) => {
+      const item = e.target.closest('[data-switch-acct]');
+      if (!item) return;
+      const id = item.dataset.switchAcct;
+      window.__viewAccountFilter = id;
+      document.getElementById('acctSwitcherMenu').style.display = 'none';
+      if (id !== 'all') {
+        await fetch('/api/action/browser-account-activate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        await loadBrowserAccounts();
+      }
+      await loadAccountSwitcher();
+      await loadActivitySummary();
+    });
+    loadAccountSwitcher();
 
     document.getElementById('shutdownBtn').addEventListener('click', async () => {
       if (!confirm('워커를 종료할까요? 콘솔 창도 같이 닫혀요.')) return;
@@ -2086,13 +2234,38 @@ function startDashboard() {
       });
       return;
     }
+    if (req.url === '/api/ai-source') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ aiSource: getCachedAiSource() }));
+      return;
+    }
+    if (req.url === '/api/action/ai-source-set' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const value = await setAiSource(parsed.source);
+          pushLog(`[대시보드] AI를 "${value === 'gemini' ? '제미나이' : '클로드'}"로 바꿈`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, aiSource: value }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
     if (req.url === '/api/activity-summary') {
       const accData = accounts.load();
       const summary = postLog.summaryByAccount();
       const now = Date.now();
       const result = accData.accounts.map((a) => {
-        const s = summary[a.id] || { dailyToday: 0, shoppingToday: 0, lastPostedAt: null, firstPostedAt: null };
-        const ageDays = s.firstPostedAt ? Math.floor((now - new Date(s.firstPostedAt).getTime()) / 86400000) : 0;
+        const s = summary[a.id] || { dailyToday: 0, shoppingToday: 0, lastPostedAt: null };
+        // "쇼핑 열림"은 실제 게시 여부가 아니라 계정을 앱에 등록한 날짜 기준(원본 앱 실측 확인:
+        // 게시 이력이 하나도 없는 새 계정도 등록 후 7일 지나면 쇼핑 열림으로 표시됨).
+        // createdAt이 없는 계정(기본 계정 등 이 필드가 생기기 전부터 있던 것)은 항상 지난 것으로 본다.
+        const ageDays = a.createdAt ? Math.floor((now - new Date(a.createdAt).getTime()) / 86400000) : 999;
         return {
           id: a.id,
           label: a.label,
@@ -2410,7 +2583,23 @@ function startDashboard() {
       req.on('end', () => {
         try {
           const parsed = JSON.parse(body || '{}');
-          const data = accounts.addAccount(parsed.label);
+          const data = accounts.addAccount(parsed.label, parsed.note);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/browser-account-note' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const data = accounts.updateNote(parsed.id, parsed.note);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, ...data }));
         } catch (err) {

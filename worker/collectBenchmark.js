@@ -1,5 +1,5 @@
 const puppeteer = require('puppeteer-core');
-const { generateViaClaude } = require('./generate');
+const { generateContent } = require('./generate');
 const accounts = require('./accounts');
 
 const CHROME_PATHS = [
@@ -81,7 +81,7 @@ ${postText.slice(0, 500)}
 ===게시물 끝===`;
 
   try {
-    const raw = await generateViaClaude(prompt);
+    const raw = await generateContent(prompt);
     console.log('[댓글] AI 원본 응답:', raw.slice(0, 200));
     const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
     const parsed = JSON.parse(cleaned);

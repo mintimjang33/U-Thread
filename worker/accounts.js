@@ -25,10 +25,17 @@ function save(data) {
   fs.writeFileSync(ACCOUNTS_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-function addAccount(label) {
+function addAccount(label, note) {
   const data = load();
   const id = 'acct_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  data.accounts.push({ id, label: label || id });
+  data.accounts.push({ id, label: label || id, note: note || '', createdAt: new Date().toISOString() });
+  save(data);
+  return data;
+}
+
+function updateNote(id, note) {
+  const data = load();
+  data.accounts = data.accounts.map((a) => (a.id === id ? { ...a, note: note || '' } : a));
   save(data);
   return data;
 }
@@ -58,4 +65,4 @@ function profileDirFor(accountId) {
   return path.join(base, 'chrome-profile-' + accountId);
 }
 
-module.exports = { load, save, addAccount, removeAccount, setActive, profileDirFor };
+module.exports = { load, save, addAccount, removeAccount, setActive, updateNote, profileDirFor };

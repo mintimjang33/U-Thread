@@ -1,4 +1,5 @@
 const spawn = require('cross-spawn');
+const { loadConfig } = require('./config');
 
 // 로컬에 설치된 Claude Code CLI를 헤드리스로 호출한다 — API 종량과금 없이 클로드 구독 안에서 처리됨.
 // cross-spawn을 쓰는 이유: Windows에서 claude(.cmd)를 execFile로 직접 부르면 ENOENT가 나고,
@@ -44,4 +45,66 @@ async function getClaudeAccountEmail() {
   return status?.email || null;
 }
 
-module.exports = { generateViaClaude, getClaudeAccountEmail, getClaudeStatus };
+// 유쓰레드 웹 대시보드의 "AI 바꾸기" 설정(ai_source: 'worker'=클로드 구독 / 'gemini'=제미나이 API 과금)을
+// 이 워커도 그대로 따른다 — 앱을 재시작할 때마다 한 번 읽어와서 메모리에 캐시해둔다.
+let cachedAiSource = 'worker';
+
+async function loadAiSource() {
+  const config = loadConfig();
+  if (!config) return cachedAiSource;
+  try {
+    const res = await fetch(config.apiBase + '/api/editor-defaults', {
+      headers: { Authorization: `Bearer ${config.token}` },
+    });
+    if (!res.ok) return cachedAiSource;
+    const data = await res.json();
+    cachedAiSource = data.defaults?.ai_source === 'gemini' ? 'gemini' : 'worker';
+    return cachedAiSource;
+  } catch {
+    return cachedAiSource;
+  }
+}
+
+async function setAiSource(source) {
+  const value = source === 'gemini' ? 'gemini' : 'worker';
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/editor-defaults', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ ai_source: value }),
+  });
+  if (!res.ok) throw new Error(`설정 저장 실패 (${res.status})`);
+  cachedAiSource = value;
+  return value;
+}
+
+async function generateViaGemini(prompt) {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + '/api/worker/generate-gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ prompt }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `제미나이 생성 실패 (${res.status})`);
+  return (data.content || '').trim();
+}
+
+// 글 생성이 필요한 모든 곳(바로쓰기, 다시쓰기, 페르소나 분석 등)은 클로드를 직접 부르는 대신
+// 이 함수를 거친다 — ai_source 설정에 따라 클로드/제미나이 중 실제로 켜져있는 쪽으로 나간다.
+async function generateContent(prompt) {
+  return cachedAiSource === 'gemini' ? generateViaGemini(prompt) : generateViaClaude(prompt);
+}
+
+module.exports = {
+  generateViaClaude,
+  getClaudeAccountEmail,
+  getClaudeStatus,
+  loadAiSource,
+  setAiSource,
+  generateViaGemini,
+  generateContent,
+  getCachedAiSource: () => cachedAiSource,
+};
