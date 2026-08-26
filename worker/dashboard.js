@@ -7,7 +7,7 @@ const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCa
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
 const { scheduleNativePost, postNowViaBrowser } = require('./nativeSchedule');
 const accounts = require('./accounts');
-const { loadMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial } = require('./materials');
+const { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial, clearUsed } = require('./materials');
 const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearAll } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
 const persona = require('./persona');
@@ -281,6 +281,72 @@ async function handleCustomCollectAction(body) {
   const { job } = await res.json();
   pushLog(`[대시보드] 직접소싱 "${keyword}"(${type === 'shopping' ? '쇼핑글' : '일상글'}) 수집 등록(${job.id.slice(0, 8)})`);
   return job;
+}
+
+// "글감 창고" 탭의 "피드 학습" — 검색어 없이 홈 피드를 스크롤하며 글감을 모은다
+// (직접소싱의 키워드 검색과 같은 수집 엔진을 검색어만 비워서 재사용).
+async function handleFeedLearnAction(body) {
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const minutes = Number(body?.minutes) || 6;
+  const maxScrolls = Math.max(3, Math.min(20, Math.round(minutes / 2)));
+  const input = {
+    keyword: '',
+    maxScrolls,
+    saveMaterialsAs: type,
+    accountId: body?.accountId || accounts.load().activeAccountId,
+    noRedupe: false,
+  };
+  const res = await fetch(config.apiBase + '/api/worker/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ type: 'collect_benchmark', input }),
+  });
+  if (!res.ok) throw new Error(`작업 생성 실패 (${res.status})`);
+  const { job } = await res.json();
+  pushLog(`[대시보드] 피드 학습(${type === 'shopping' ? '쇼핑글' : '일상글'}) 수집 등록(${job.id.slice(0, 8)})`);
+  return job;
+}
+
+// "바이럴훅 가져오기" — 특정 게시물 링크(들)를 직접 붙여넣어 그 원문 그대로 글감 창고에 담는다.
+// 검색이 아니라 이미 알고 있는 잘 터진 글을 콕 집어 가져오는 용도.
+async function handleMaterialImportUrlAction(body) {
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const accountId = body?.accountId || accounts.load().activeAccountId;
+  const urls = (body?.urls || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (!urls.length) throw new Error('링크를 한 줄에 하나씩 입력하세요.');
+  const items = [];
+  const failed = [];
+  for (const url of urls) {
+    try {
+      const text = await scrapeThreadsPost(url, accountId);
+      items.push({ content: text });
+    } catch (err) {
+      failed.push(`${url}: ${err.message}`);
+    }
+  }
+  const saved = items.length ? addMaterials(type, items) : [];
+  pushLog(`[대시보드] 바이럴훅 가져오기: ${items.length}개 담음${failed.length ? `, ${failed.length}개 실패` : ''}`);
+  return { added: items.length, failed };
+}
+
+// "CSV" — 클라이언트에서 미리 줄 단위로 잘라 보낸 텍스트를 그대로 글감 창고에 담는다.
+async function handleMaterialImportCsvAction(body) {
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const lines = Array.isArray(body?.lines) ? body.lines.map((l) => String(l || '').trim()).filter(Boolean) : [];
+  if (!lines.length) throw new Error('가져올 내용이 없어요.');
+  addMaterials(type, lines.map((content) => ({ content })));
+  pushLog(`[대시보드] CSV로 ${lines.length}개 담음(${type === 'shopping' ? '쇼핑글' : '일상글'})`);
+  return { added: lines.length };
+}
+
+// "창고 정리" — 이미 변환에 쓴 글감만 정리(삭제)한다.
+async function handleMaterialsClearUsedAction(body) {
+  const type = body?.type === 'shopping' ? 'shopping' : 'daily';
+  const removed = clearUsed(type);
+  pushLog(`[대시보드] ${type === 'shopping' ? '쇼핑글' : '일상글'} 창고 정리: 사용된 글감 ${removed}개 삭제`);
+  return { removed };
 }
 
 async function handleCustomWriteAction(body) {
@@ -995,6 +1061,35 @@ const PAGE = () => `<!doctype html>
             <button class="secondary" id="ideasRefreshBtn">🔄 새로고침</button>
           </div>
           <div class="sub">누르면 원본 글이 열립니다 · 변환은 체크 후 [🔥 선택 N개 변환] · 나쁜 글감은 체크해서 버리세요. 새로 모으는 버튼은 일상글 올리기·쇼핑글 올리기 탭에 있습니다.</div>
+
+          <div style="margin-top:10px;border:1px solid #eee;border-radius:8px">
+            <div id="ideasImportHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;font-weight:700;font-size:13px">
+              <span>가져오기 · 피드 학습 · CSV · 창고 정리</span>
+              <span id="ideasImportChevron">▾</span>
+            </div>
+            <div id="ideasImportBody" style="display:none;padding:0 12px 12px">
+              <div class="row">
+                <label style="font-size:12px;color:#666">담을 곳</label>
+                <select id="ideasImportType"><option value="daily">일상글</option><option value="shopping">쇼핑글</option></select>
+              </div>
+              <div class="actions">
+                <button class="secondary" id="ideasImportUrlToggleBtn" style="flex:1">바이럴훅 가져오기</button>
+                <button class="secondary" id="ideasFeedLearnBtn" style="flex:1">피드 학습</button>
+                <button class="secondary" id="ideasCsvBtn">CSV</button>
+                <input type="file" id="ideasCsvFile" accept=".csv,.txt" style="display:none" />
+              </div>
+              <div id="ideasImportUrlArea" style="display:none;margin-top:6px">
+                <textarea id="ideasImportUrlText" placeholder="쓰레드 게시물 링크를 한 줄에 하나씩 붙여넣으세요" style="width:100%;min-height:70px;box-sizing:border-box;border:1px solid #ddd;border-radius:8px;padding:8px;font-size:12px"></textarea>
+                <div class="actions" style="margin-top:6px"><button id="ideasImportUrlSubmitBtn">가져오기</button></div>
+              </div>
+              <div class="actions" style="margin-top:6px">
+                <button class="secondary" id="ideasClearUsedDailyBtn" style="flex:1;color:#dc2626;border-color:#fca5a5">🗑 일상글 창고 정리</button>
+                <button class="secondary" id="ideasClearUsedShoppingBtn" style="flex:1;color:#dc2626;border-color:#fca5a5">🗑 쇼핑글 창고 정리</button>
+              </div>
+              <div id="ideasImportMsg" class="sub" style="margin-top:6px;min-height:16px"></div>
+            </div>
+          </div>
+
           <div class="actions" style="margin-top:8px">
             <button class="secondary" id="ideasFilterAll">전체</button>
             <button class="secondary" id="ideasFilterDaily">일상</button>
@@ -1962,6 +2057,82 @@ const PAGE = () => `<!doctype html>
       }).join('');
       updateIdeasConvertBtnLabel();
     }
+    document.getElementById('ideasImportHeader').addEventListener('click', () => {
+      const body = document.getElementById('ideasImportBody');
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      document.getElementById('ideasImportChevron').textContent = open ? '▾' : '▴';
+    });
+    document.getElementById('ideasImportUrlToggleBtn').addEventListener('click', () => {
+      const area = document.getElementById('ideasImportUrlArea');
+      area.style.display = area.style.display === 'none' ? 'block' : 'none';
+    });
+    document.getElementById('ideasImportUrlSubmitBtn').addEventListener('click', async () => {
+      const urls = document.getElementById('ideasImportUrlText').value.trim();
+      const type = document.getElementById('ideasImportType').value;
+      const msgEl = document.getElementById('ideasImportMsg');
+      if (!urls) { msgEl.textContent = '❌ 링크를 입력하세요.'; return; }
+      msgEl.textContent = '가져오는 중...(링크 개수만큼 시간이 걸려요)';
+      try {
+        const res = await fetch('/api/action/materials-import-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls, type }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ ' + data.added + '개 담았어요' + (data.failed && data.failed.length ? ' (실패 ' + data.failed.length + '개)' : '');
+        document.getElementById('ideasImportUrlText').value = '';
+        await loadIdeas();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('ideasFeedLearnBtn').addEventListener('click', async () => {
+      const type = document.getElementById('ideasImportType').value;
+      const msgEl = document.getElementById('ideasImportMsg');
+      msgEl.textContent = '피드 학습 등록 중...';
+      try {
+        const res = await fetch('/api/action/materials-feed-learn', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ 피드 학습 작업이 등록됐어요 — 잠시 후 글감 창고에 쌓여요(새로고침 눌러 확인).';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('ideasCsvBtn').addEventListener('click', () => {
+      document.getElementById('ideasCsvFile').click();
+    });
+    document.getElementById('ideasCsvFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const type = document.getElementById('ideasImportType').value;
+      const msgEl = document.getElementById('ideasImportMsg');
+      const text = await file.text();
+      const lines = text.split('\\n').map((l) => l.replace(/\\r$/, '')).map((l) => l.trim()).filter(Boolean);
+      msgEl.textContent = lines.length + '줄 읽음 — 담는 중...';
+      try {
+        const res = await fetch('/api/action/materials-import-csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, lines }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ ' + data.added + '개 담았어요.';
+        await loadIdeas();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+      e.target.value = '';
+    });
+    async function clearUsedMaterials(type) {
+      const msgEl = document.getElementById('ideasImportMsg');
+      try {
+        const res = await fetch('/api/action/materials-clear-used', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '🗑 ' + data.removed + '개 정리했어요.';
+        await loadIdeas();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    }
+    document.getElementById('ideasClearUsedDailyBtn').addEventListener('click', () => clearUsedMaterials('daily'));
+    document.getElementById('ideasClearUsedShoppingBtn').addEventListener('click', () => clearUsedMaterials('shopping'));
     document.getElementById('ideasRefreshBtn').addEventListener('click', loadIdeas);
     document.getElementById('ideasFilterAll').addEventListener('click', () => { ideasFilter = 'all'; loadIdeas(); });
     document.getElementById('ideasFilterDaily').addEventListener('click', () => { ideasFilter = 'daily'; loadIdeas(); });
@@ -2963,6 +3134,66 @@ function startDashboard() {
           const drafts = await handleCustomWriteAction(JSON.parse(body || '{}'));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, drafts }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/materials-feed-learn' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const job = await handleFeedLearnAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, job }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/materials-import-url' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleMaterialImportUrlAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/materials-import-csv' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleMaterialImportCsvAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/materials-clear-used' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleMaterialsClearUsedAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));

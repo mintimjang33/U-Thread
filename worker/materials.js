@@ -61,4 +61,13 @@ function takeMaterialsByIds(type, ids) {
   return picked;
 }
 
-module.exports = { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial };
+// "창고 정리" — 이미 변환에 쓴(used) 글감만 지우고, 아직 안 쓴 건 남겨둔다.
+function clearUsed(type) {
+  const data = loadMaterials();
+  const before = (data[type] || []).length;
+  data[type] = (data[type] || []).filter((m) => !m.used);
+  saveMaterials(data);
+  return before - data[type].length;
+}
+
+module.exports = { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial, clearUsed };
