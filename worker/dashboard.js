@@ -1509,6 +1509,22 @@ const PAGE = () => `<!doctype html>
           </div>
           <div id="cloneWriteMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
         </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🎴 카드도 만들기</h1>
+          <div class="sub">글 내용을 정사각형 카드 이미지로 만들어요(AI 이미지 생성 없이 즉석에서, 무료). 스타일을 고르고 다운로드하세요.</div>
+          <textarea id="cardText" rows="4" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit;box-sizing:border-box" placeholder="카드에 넣을 짧은 문장을 쓰세요(위 '그 결로 글쓰기'로 만든 글을 붙여넣어도 좋아요)"></textarea>
+          <div class="row" style="margin-top:8px">
+            <select id="cardStyle">
+              <option value="purple">보라 그라데이션</option>
+              <option value="dark">다크</option>
+              <option value="warm">웜톤</option>
+              <option value="mono">화이트 미니멀</option>
+            </select>
+            <button id="cardMakeBtn">🎴 카드 만들기</button>
+          </div>
+          <div id="cardPreviewArea" style="margin-top:10px"></div>
+        </div>
       </div>
 
       ${NAV_SECTIONS.flatMap((s) => s.items)
@@ -3007,6 +3023,65 @@ const PAGE = () => `<!doctype html>
       }
     });
     document.querySelector('.navitem[data-tab="clone"]').addEventListener('click', loadClone);
+
+    // ---- 카드 만들기(즉석 이미지 합성, AI 없음) ----
+    var CARD_STYLES = {
+      purple: { bg: ['#7c3aed', '#c026d3'], text: '#ffffff' },
+      dark: { bg: ['#111827', '#374151'], text: '#ffffff' },
+      warm: { bg: ['#f59e0b', '#ef4444'], text: '#ffffff' },
+      mono: { bg: ['#ffffff', '#f3f4f6'], text: '#111827' },
+    };
+    function wrapCardText(ctx, text, maxWidth) {
+      var paragraphs = text.split('\\n');
+      var lines = [];
+      for (var pi = 0; pi < paragraphs.length; pi++) {
+        var para = paragraphs[pi];
+        if (!para) { lines.push(''); continue; }
+        var words = para.split(' ');
+        var line = '';
+        for (var wi = 0; wi < words.length; wi++) {
+          var test = line ? line + ' ' + words[wi] : words[wi];
+          if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = words[wi]; }
+          else line = test;
+        }
+        if (line) lines.push(line);
+      }
+      return lines;
+    }
+    function drawCard(text, styleKey) {
+      var canvas = document.createElement('canvas');
+      canvas.width = 1080;
+      canvas.height = 1080;
+      var ctx = canvas.getContext('2d');
+      var style = CARD_STYLES[styleKey] || CARD_STYLES.purple;
+      var grad = ctx.createLinearGradient(0, 0, 1080, 1080);
+      grad.addColorStop(0, style.bg[0]);
+      grad.addColorStop(1, style.bg[1]);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1080, 1080);
+      ctx.fillStyle = style.text;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = "700 56px -apple-system, 'Malgun Gothic', sans-serif";
+      var lines = wrapCardText(ctx, text, 900);
+      var lineHeight = 76;
+      var startY = 540 - ((lines.length - 1) * lineHeight) / 2;
+      for (var li = 0; li < lines.length; li++) {
+        ctx.fillText(lines[li], 540, startY + li * lineHeight);
+      }
+      return canvas;
+    }
+    document.getElementById('cardMakeBtn').addEventListener('click', function () {
+      var text = document.getElementById('cardText').value.trim();
+      if (!text) { alert('카드에 넣을 문장을 입력하세요.'); return; }
+      var styleKey = document.getElementById('cardStyle').value;
+      var canvas = drawCard(text, styleKey);
+      var dataUrl = canvas.toDataURL('image/png');
+      var area = document.getElementById('cardPreviewArea');
+      area.innerHTML =
+        '<img src="' + dataUrl + '" style="width:100%;max-width:320px;border-radius:8px;border:1px solid #eee;display:block" />' +
+        '<div class="actions" style="margin-top:8px"><a download="card.png" href="' + dataUrl + '"><button>⬇ 다운로드</button></a></div>';
+    });
 
     document.querySelector('.navitem[data-tab="custom"]').addEventListener('click', loadCustomKeywords);
     document.querySelector('.navitem[data-tab="review"]').addEventListener('click', loadReviewQueue);
