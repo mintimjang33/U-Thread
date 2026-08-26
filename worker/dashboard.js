@@ -4,7 +4,7 @@ const path = require('path');
 const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCachedAiSource } = require('./generate');
-const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
+const { closeBrowser, collectBenchmark, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
 const { scheduleNativePost, postNowViaBrowser } = require('./nativeSchedule');
 const accounts = require('./accounts');
 const { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial, clearUsed } = require('./materials');
@@ -14,6 +14,8 @@ const persona = require('./persona');
 const channelClone = require('./channelClone');
 const postLog = require('./postLog');
 const coupangLocal = require('./coupangLocal');
+const autoEngine = require('./autoEngine');
+const defaultKeywords = require('./defaultKeywords');
 
 // "직접 소싱(커스텀)" 탭 전용 로컬 키워드 저장 — 앱 기본 검색어(웹 대시보드의 검색 키워드 관리)와
 // 별개로, 이 탭에서만 쓰는 검색어를 로컬 파일에 저장한다.
@@ -159,6 +161,51 @@ async function handleCoupangTestAction() {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || '연결 테스트 실패');
   return data;
+}
+
+async function handleCoupangSearchAction(body) {
+  const keyword = (body?.keyword || '').trim();
+  if (!keyword) throw new Error('검색어를 입력하세요.');
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const res = await fetch(config.apiBase + `/api/coupang/search?keyword=${encodeURIComponent(keyword)}`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '검색 실패');
+  return data;
+}
+
+// 검색으로 고른 쿠팡 상품 하나로 쇼핑글을 쓰고, 딥링크를 본문 끝에 자동으로 붙여 [검수] 탭에 담는다.
+async function handleCoupangWriteFromProductAction(body) {
+  const productName = (body?.productName || '').trim();
+  const productUrl = (body?.productUrl || '').trim();
+  if (!productName || !productUrl) throw new Error('상품 정보가 없습니다.');
+  const accountId = body?.accountId || accounts.load().activeAccountId;
+  const personaNote = persona.getEffectiveNote(accountId);
+
+  const prompt = `아래 쿠팡 상품을 소개하는 쓰레드(Threads) 쇼핑글을 하나 써라. 광고 티 안 나게, 실제로 써본 사람처럼 자연스럽게 써라. 가격은 자연스럽게 한 번만 언급해라. 결과는 본문 텍스트만 출력해라(설명이나 따옴표 없이, 링크는 넣지 마라 — 링크는 자동으로 따로 붙는다).
+말투 지침: ${personaNote}
+
+상품명: ${productName}
+가격: ${body?.productPrice ? Number(body.productPrice).toLocaleString('ko-KR') + '원' : '비공개'}`;
+  const content = (await generateContent(prompt)).trim();
+
+  const config = loadConfig();
+  if (!config) throw new Error('페어링 설정이 없습니다.');
+  const linkRes = await fetch(config.apiBase + '/api/coupang/deeplink', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+    body: JSON.stringify({ url: productUrl }),
+  });
+  const linkData = await linkRes.json();
+  const shortUrl = linkRes.ok ? linkData.link?.shortenUrl : null;
+  if (!linkRes.ok) pushLog(`[대시보드] 쿠팡 딥링크 생성 실패(원본 링크로 대체): ${linkData.error || linkRes.status}`);
+
+  const fullContent = content + '\n\n' + (shortUrl || productUrl);
+  const draft = addDraft({ type: 'shopping', content: fullContent, source: '쿠팡 상품 검색', accountId });
+  pushLog(`[대시보드] 쿠팡 상품("${productName.slice(0, 20)}...")으로 쇼핑글 생성 → [검수] 탭에 추가됨`);
+  return draft;
 }
 
 async function handleCoupangSetPartnerAction(body) {
@@ -359,7 +406,7 @@ async function handleCustomWriteAction(body) {
   const drafts = [];
   for (const m of materials) {
     const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
-    drafts.push(addDraft({ type, content, source: '직접소싱' }));
+    drafts.push(addDraft({ type, content, source: '직접소싱', accountId }));
   }
   pushLog(`[대시보드] 직접소싱 바로쓰기로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
   return drafts;
@@ -383,7 +430,7 @@ async function handleConvertSelectedMaterialsAction(body) {
     const materials = takeMaterialsByIds(type, byType[type]);
     for (const m of materials) {
       const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
-      drafts.push(addDraft({ type, content, source: '글감창고(선택 변환)' }));
+      drafts.push(addDraft({ type, content, source: '글감창고(선택 변환)', accountId }));
     }
   }
   pushLog(`[대시보드] 글감 창고에서 선택한 ${drafts.length}개 변환 → [검수] 탭에 추가됨`);
@@ -408,7 +455,7 @@ async function handlePasteAction(body) {
     content = raw; // 직접 쓴 글은 AI를 거치지 않고 그대로 담는다.
     source = '직접 작성';
   }
-  const draft = addDraft({ type, content, source });
+  const draft = addDraft({ type, content, source, accountId });
   pushLog(`[대시보드] [검수] 탭에 추가됨(${draft.id})`);
   return draft;
 }
@@ -452,6 +499,45 @@ async function handlePostNowViaBrowserAction(body) {
   return result;
 }
 
+// "🔄 N시간마다 전 계정 순회" — 켜져 있으면 폴링 루프마다 호출돼서, 마지막 실행 후
+// intervalHours가 지난 계정이 있으면 그 계정으로 자동 생성+게시를 한 번 돌린다.
+// 실패해도 다음 계정/다음 사이클에 영향 안 주게 계정별로 독립적으로 처리한다.
+async function runAutoEngineCycle() {
+  const engineState = autoEngine.load();
+  if (!engineState.enabled) return;
+  const accData = accounts.load();
+  const now = Date.now();
+  for (const acct of accData.accounts) {
+    if (!autoEngine.isDue(acct.id)) continue;
+    try {
+      const ageDays = acct.createdAt ? Math.floor((now - new Date(acct.createdAt).getTime()) / 86400000) : 999;
+      const shoppingOpen = ageDays >= 7;
+      const type = shoppingOpen && Math.random() < 0.25 ? 'shopping' : 'daily';
+
+      let [material] = takeUnusedMaterials(type, 1);
+      if (!material) {
+        const keyword = defaultKeywords.pickEnabledKeyword(type) || '';
+        pushLog(`[자동엔진] "${acct.label}" 글감이 없어 ${keyword ? `"${keyword}" 검색` : '홈 피드'}으로 원본 수집 시도`);
+        const collected = await collectBenchmark({ keyword, maxScrolls: 3, accountId: acct.id, saveMaterialsAs: type });
+        if (collected.items?.length) addMaterials(type, collected.items, { skipDedupe: true });
+        [material] = takeUnusedMaterials(type, 1);
+      }
+      if (!material) {
+        pushLog(`[자동엔진] "${acct.label}" 이번 사이클에 쓸 글감을 못 구해 건너뜀`);
+        continue;
+      }
+
+      const content = (await generateContent(buildRewritePrompt(type, material.content, acct.id))).trim();
+      await handlePostNowViaBrowserAction({ text: content, type, accountId: acct.id });
+      pushLog(`[자동엔진] "${acct.label}" 자동 게시 완료(${type === 'shopping' ? '쇼핑글' : '일상글'})`);
+    } catch (err) {
+      pushLog(`[자동엔진] "${acct.label}" 자동 실행 실패(다음 사이클에 재시도): ${err.message}`);
+    } finally {
+      autoEngine.markRan(acct.id);
+    }
+  }
+}
+
 async function handleQueueClearAllAction() {
   const count = loadQueue().length;
   clearAll();
@@ -473,7 +559,7 @@ async function handleQueueRewriteAllAction() {
     const accountId = accounts.load().activeAccountId;
     for (const m of materials) {
       const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
-      drafts.push(addDraft({ type, content, source: '전체 다시쓰기' }));
+      drafts.push(addDraft({ type, content, source: '전체 다시쓰기', accountId }));
     }
     if (materials.length < count) {
       pushLog(`[대시보드] ${type} 글감이 부족해서 ${count}개 중 ${materials.length}개만 다시 씀 — 원본 수집을 더 해주세요.`);
@@ -562,7 +648,8 @@ async function handleChannelWriteAction(body) {
   if (!data) throw new Error('먼저 계정을 배우세요.');
   const count = Math.max(1, Math.min(3, Number(body?.count) || 1));
   const type = body?.type === 'shopping' ? 'shopping' : 'daily';
-  const personaNote = persona.getEffectiveNote(body?.accountId || accounts.load().activeAccountId);
+  const accountId = body?.accountId || accounts.load().activeAccountId;
+  const personaNote = persona.getEffectiveNote(accountId);
 
   const samples = data.samplePosts.sort(() => Math.random() - 0.5).slice(0, 2);
   const drafts = [];
@@ -578,7 +665,7 @@ ${samples.map((s, idx) => `--- 예시 ${idx + 1} ---\n${s.slice(0, 400)}`).join(
 
 결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).`;
     const content = (await generateContent(prompt)).trim();
-    drafts.push(addDraft({ type, content, source: '채널복제' }));
+    drafts.push(addDraft({ type, content, source: '채널복제', accountId }));
   }
   pushLog(`[대시보드] 채널 복제로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
   return drafts;
@@ -746,6 +833,43 @@ const PAGE = () => `<!doctype html>
           </div>
           <div class="sub">계정마다 오늘 올린 개수·쇼핑글을 쓸 수 있는 상태인지 봅니다</div>
           <div id="accountStatusArea"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">🔄 자동 예열/자동 올리기</h1>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700">
+              <input type="checkbox" id="autoEngineToggle" /> 켜기
+            </label>
+          </div>
+          <div class="sub" style="color:#dc2626">⚠️ 켜두면 워커가 정한 시간마다 계정별로 알아서 글을 만들어 실제로 게시합니다(검수 없이 바로 올라감). 처음 켤 땐 짧게 지켜보다가 문제없으면 그대로 두세요.</div>
+          <div class="row" style="margin-top:6px">
+            <span class="label">주기</span>
+            <select id="autoEngineInterval">
+              <option value="2">2시간마다</option>
+              <option value="4" selected>4시간마다</option>
+              <option value="6">6시간마다</option>
+              <option value="12">12시간마다</option>
+              <option value="24">24시간마다</option>
+            </select>
+          </div>
+          <div id="autoEngineNextRuns" class="sub" style="margin-top:4px"></div>
+
+          <div style="margin-top:10px;border:1px solid #eee;border-radius:8px">
+            <div id="autoKwHeader" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer;font-weight:700;font-size:13px">
+              <span>앱이 쓰는 검색어</span>
+              <span id="autoKwChevron">▾</span>
+            </div>
+            <div id="autoKwBody" style="display:none;padding:0 12px 12px">
+              <div class="sub">글감이 떨어졌을 때 자동 엔진이 원본을 찾는 데 쓰는 검색어예요. 체크를 끄면 그 검색어는 안 씁니다. 아무것도 안 켜져 있으면 검색어 없이 홈 피드를 훑어요.</div>
+              <div class="sub" style="font-weight:700;margin-top:6px">일상글 검색어</div>
+              <div id="autoKwDailyList"></div>
+              <div class="row"><input type="text" id="autoKwDailyInput" placeholder="검색어 추가" /><button id="autoKwDailyAddBtn">추가</button></div>
+              <div class="sub" style="font-weight:700;margin-top:6px">쇼핑글 검색어</div>
+              <div id="autoKwShoppingList"></div>
+              <div class="row"><input type="text" id="autoKwShoppingInput" placeholder="검색어 추가" /><button id="autoKwShoppingAddBtn">추가</button></div>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -918,6 +1042,17 @@ const PAGE = () => `<!doctype html>
             <button id="shoppingPostBtn" style="background:#2563eb">올리기</button>
           </div>
           <div id="shoppingPostMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:15px">🔍 쿠팡 상품 검색해서 글 만들기</h1>
+          <div class="sub">상품을 검색해서 고르면, AI가 소개글을 쓰고 쿠팡 딥링크를 본문 끝에 자동으로 붙여 [검수] 탭에 담아요. [쿠파스 API 연결] 탭에서 키를 먼저 등록해야 해요.</div>
+          <div class="row">
+            <input type="text" id="coupangSearchKeyword" placeholder="예: 무선 청소기" />
+            <button id="coupangSearchBtn">검색</button>
+          </div>
+          <div id="coupangSearchMsg" class="sub" style="min-height:16px"></div>
+          <div id="coupangSearchResults" style="margin-top:6px"></div>
         </div>
       </div>
 
@@ -1309,6 +1444,7 @@ const PAGE = () => `<!doctype html>
           <div class="actions">
             <button class="secondary" id="scheduleRefreshBtn">🔄 새로고침</button>
             <button id="bulkScheduleToggleBtn">🐣 한번에 예약하기</button>
+            <button class="secondary" id="scheduleCrossSortBtn">🔀 계정 교차 정렬</button>
           </div>
           <div id="bulkScheduleArea" style="display:none;margin-top:10px;padding:12px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb">
             <div class="row">
@@ -1753,6 +1889,60 @@ const PAGE = () => `<!doctype html>
       window.open(base + '/dashboard/ai-worker', '_blank');
     });
     wireManualPost('shopping', 'shopping');
+
+    // ---- 쿠팡 상품 검색해서 글 만들기 ----
+    document.getElementById('coupangSearchBtn').addEventListener('click', async () => {
+      const keyword = document.getElementById('coupangSearchKeyword').value.trim();
+      const msgEl = document.getElementById('coupangSearchMsg');
+      const resultsEl = document.getElementById('coupangSearchResults');
+      if (!keyword) { msgEl.textContent = '❌ 검색어를 입력하세요.'; return; }
+      msgEl.textContent = '검색 중...';
+      resultsEl.innerHTML = '';
+      try {
+        const res = await fetch('/api/action/coupang-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keyword }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        const products = data.products || [];
+        msgEl.textContent = products.length ? products.length + '개 찾음' : '검색 결과가 없어요.';
+        resultsEl.innerHTML = products.slice(0, 8).map((p, i) => (
+          '<div class="checkitem" style="display:flex;gap:8px;align-items:center">' +
+          (p.productImage ? '<img src="' + p.productImage + '" style="width:48px;height:48px;object-fit:cover;border-radius:6px" />' : '') +
+          '<div style="flex:1;min-width:0">' +
+          '<div class="ci-title" style="font-size:12px">' + p.productName + '</div>' +
+          '<div class="sub" style="margin:0">' + Number(p.productPrice || 0).toLocaleString('ko-KR') + '원</div>' +
+          '</div>' +
+          '<button data-coupang-write="' + i + '">이 상품으로 글쓰기</button>' +
+          '</div>'
+        )).join('');
+        resultsEl.dataset.products = JSON.stringify(products.slice(0, 8));
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('coupangSearchResults').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-coupang-write]');
+      if (!btn) return;
+      const products = JSON.parse(document.getElementById('coupangSearchResults').dataset.products || '[]');
+      const p = products[Number(btn.dataset.coupangWrite)];
+      if (!p) return;
+      const msgEl = document.getElementById('coupangSearchMsg');
+      btn.disabled = true;
+      msgEl.textContent = '글 쓰는 중...';
+      try {
+        const res = await fetch('/api/action/coupang-write-from-product', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productName: p.productName, productPrice: p.productPrice, productUrl: p.productUrl }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ [검수] 탭에 추가됐어요.';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
     // ---- 직접 소싱(커스텀) ----
     async function loadCustomKeywords() {
@@ -2571,6 +2761,25 @@ const PAGE = () => `<!doctype html>
       const pad = (n) => String(n).padStart(2, '0');
       return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     }
+    let scheduleCrossSort = false;
+    function interleaveByAccount(items) {
+      const groups = new Map();
+      for (const d of items) {
+        const key = d.accountId || 'default';
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(d);
+      }
+      const queues = [...groups.values()];
+      const result = [];
+      let remaining = items.length;
+      while (remaining > 0) {
+        for (const q of queues) {
+          const next = q.shift();
+          if (next) { result.push(next); remaining--; }
+        }
+      }
+      return result;
+    }
     async function loadSchedule() {
       const res = await fetch('/api/queue');
       const data = await res.json();
@@ -2579,8 +2788,14 @@ const PAGE = () => `<!doctype html>
         el.innerHTML = '<div class="sub">[검수] 탭에 글이 없어요 — 먼저 글을 만드세요.</div>';
         return;
       }
-      el.innerHTML = data.items.map((d) => (
+      const accRes = await fetch('/api/browser-accounts');
+      const accData = await accRes.json();
+      const accLabel = {};
+      (accData.accounts || []).forEach((a) => { accLabel[a.id] = a.label + (a.note ? ' · ' + a.note : ''); });
+      const items = scheduleCrossSort ? interleaveByAccount(data.items) : data.items;
+      el.innerHTML = items.map((d) => (
         '<div class="checkitem"><div class="ci-title">' + (d.type === 'shopping' ? '🛒 쇼핑글' : '💬 일상글') +
+        ' · 👤 ' + (accLabel[d.accountId] || d.accountId || '기본 계정') +
         (d.scheduledAt ? ' · ⏰ ' + new Date(d.scheduledAt).toLocaleString('ko-KR') + ' 예약됨' : ' · 예약 안 됨') + '</div>' +
         '<div class="ci-desc" style="white-space:pre-wrap">' + d.content.replace(/</g, '&lt;').slice(0, 150) + '</div>' +
         '<div class="row" style="margin-top:6px">' +
@@ -2594,6 +2809,13 @@ const PAGE = () => `<!doctype html>
       )).join('');
     }
     document.getElementById('scheduleRefreshBtn').addEventListener('click', loadSchedule);
+    document.getElementById('scheduleCrossSortBtn').addEventListener('click', (e) => {
+      scheduleCrossSort = !scheduleCrossSort;
+      e.target.style.background = scheduleCrossSort ? '#6d28d9' : '';
+      e.target.style.color = scheduleCrossSort ? '#fff' : '';
+      e.target.classList.toggle('secondary', !scheduleCrossSort);
+      loadSchedule();
+    });
     document.getElementById('bulkScheduleToggleBtn').addEventListener('click', () => {
       const area = document.getElementById('bulkScheduleArea');
       const willOpen = area.style.display === 'none';
@@ -2694,6 +2916,7 @@ const PAGE = () => `<!doctype html>
           '<div class="ci-desc">' + p.summary.replace(/</g, '&lt;').slice(0, 200) + '</div>' +
           '<div class="row" style="margin-top:6px">' +
           '<button data-clone-select="' + p.id + '"' + (isSelected ? ' disabled' : '') + '>' + (isSelected ? '✅ 선택됨' : '이 결 쓰기') + '</button>' +
+          (p.topics.length ? '<button class="secondary" data-clone-fill-keywords="' + p.id + '">🔑 이 주제로 검색어 채우기</button>' : '') +
           '<button class="secondary" data-clone-delete="' + p.id + '">삭제</button>' +
           '</div></div>'
         );
@@ -2744,6 +2967,21 @@ const PAGE = () => `<!doctype html>
           body: JSON.stringify({ id: delBtn.dataset.cloneDelete }),
         });
         await loadClone();
+        return;
+      }
+      const fillBtn = e.target.closest('[data-clone-fill-keywords]');
+      if (fillBtn) {
+        const cloneRes = await fetch('/api/channel-clone');
+        const cloneData = await cloneRes.json();
+        const profile = cloneData.profiles.find((p) => p.id === fillBtn.dataset.cloneFillKeywords);
+        if (!profile || !profile.topics.length) return;
+        const type = confirm('쇼핑글 검색어로 채울까요? (취소하면 일상글로 채워요)') ? 'shopping' : 'daily';
+        await fetch('/api/action/add-keyword-group', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, name: '채널복제: ' + profile.accounts[0], keywords: profile.topics }),
+        });
+        alert('[직접 소싱] 탭 검색어 그룹에 "' + profile.topics.join(', ') + '" 추가했어요.');
       }
     });
     document.getElementById('cloneWriteBtn').addEventListener('click', async () => {
@@ -2986,6 +3224,77 @@ const PAGE = () => `<!doctype html>
     document.getElementById('todayActivityRefreshBtn').addEventListener('click', loadActivitySummary);
     document.getElementById('accountStatusRefreshBtn').addEventListener('click', loadActivitySummary);
     loadActivitySummary();
+
+    // ---- 자동 예열/자동 올리기 ----
+    async function loadAutoEngine() {
+      const res = await fetch('/api/auto-engine');
+      const data = await res.json();
+      document.getElementById('autoEngineToggle').checked = !!data.enabled;
+      document.getElementById('autoEngineInterval').value = String(data.intervalHours || 4);
+      const el = document.getElementById('autoEngineNextRuns');
+      if (!data.enabled) {
+        el.textContent = '꺼져 있어요.';
+      } else {
+        el.innerHTML = data.nextRuns.map((n) => (
+          '<div>' + n.label + ' · 다음 실행: ' + (n.nextRunAt ? new Date(n.nextRunAt).toLocaleString('ko-KR') : '곧(첫 실행)') + '</div>'
+        )).join('');
+      }
+    }
+    document.getElementById('autoEngineToggle').addEventListener('change', async (e) => {
+      await fetch('/api/action/auto-engine-toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: e.target.checked }) });
+      await loadAutoEngine();
+    });
+    document.getElementById('autoEngineInterval').addEventListener('change', async (e) => {
+      await fetch('/api/action/auto-engine-interval', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hours: e.target.value }) });
+      await loadAutoEngine();
+    });
+    document.getElementById('autoKwHeader').addEventListener('click', () => {
+      const body = document.getElementById('autoKwBody');
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      document.getElementById('autoKwChevron').textContent = open ? '▾' : '▴';
+      if (!open) loadAutoKeywords();
+    });
+    function renderAutoKwList(elId, list, type) {
+      const el = document.getElementById(elId);
+      if (!list.length) { el.innerHTML = '<div class="sub" style="margin:2px 0">아직 없어요.</div>'; return; }
+      el.innerHTML = list.map((k) => (
+        '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px">' +
+        '<input type="checkbox" data-autokw-toggle="' + k.id + '" data-autokw-type="' + type + '"' + (k.enabled ? ' checked' : '') + ' />' +
+        '<span style="flex:1">' + k.keyword + '</span>' +
+        '<span data-autokw-remove="' + k.id + '" data-autokw-type="' + type + '" style="cursor:pointer;color:#a78bfa">×</span>' +
+        '</label>'
+      )).join('');
+    }
+    async function loadAutoKeywords() {
+      const res = await fetch('/api/default-keywords');
+      const data = await res.json();
+      renderAutoKwList('autoKwDailyList', data.daily || [], 'daily');
+      renderAutoKwList('autoKwShoppingList', data.shopping || [], 'shopping');
+    }
+    async function addAutoKeyword(type) {
+      const input = document.getElementById(type === 'daily' ? 'autoKwDailyInput' : 'autoKwShoppingInput');
+      const keyword = input.value.trim();
+      if (!keyword) return;
+      const res = await fetch('/api/action/default-keyword-add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, keyword }) });
+      if (res.ok) input.value = '';
+      await loadAutoKeywords();
+    }
+    document.getElementById('autoKwDailyAddBtn').addEventListener('click', () => addAutoKeyword('daily'));
+    document.getElementById('autoKwShoppingAddBtn').addEventListener('click', () => addAutoKeyword('shopping'));
+    document.addEventListener('change', async (e) => {
+      const el = e.target.closest('[data-autokw-toggle]');
+      if (!el) return;
+      await fetch('/api/action/default-keyword-toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: el.dataset.autokwType, id: el.dataset.autokwToggle }) });
+      await loadAutoKeywords();
+    });
+    document.addEventListener('click', async (e) => {
+      const el = e.target.closest('[data-autokw-remove]');
+      if (!el) return;
+      await fetch('/api/action/default-keyword-remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: el.dataset.autokwType, id: el.dataset.autokwRemove }) });
+      await loadAutoKeywords();
+    });
+    loadAutoEngine();
 
     // ---- 사이드바 계정 스위처(전체 계정 / 계정별 보기) ----
     async function loadAccountSwitcher() {
@@ -3617,6 +3926,102 @@ function startDashboard() {
         });
       return;
     }
+    if (req.url === '/api/auto-engine') {
+      const data = autoEngine.load();
+      const accData = accounts.load();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ...data,
+        nextRuns: accData.accounts.map((a) => ({ id: a.id, label: a.label, nextRunAt: autoEngine.nextRunAt(a.id) })),
+      }));
+      return;
+    }
+    if (req.url === '/api/action/auto-engine-toggle' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { enabled } = JSON.parse(body || '{}');
+          const data = autoEngine.setEnabled(enabled);
+          pushLog(`[대시보드] 자동 예열/자동 올리기 엔진 ${enabled ? '켜짐' : '꺼짐'}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/auto-engine-interval' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { hours } = JSON.parse(body || '{}');
+          const data = autoEngine.setIntervalHours(hours);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/default-keywords') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(defaultKeywords.load()));
+      return;
+    }
+    if (req.url === '/api/action/default-keyword-add' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { type, keyword } = JSON.parse(body || '{}');
+          const data = defaultKeywords.addKeyword(type === 'shopping' ? 'shopping' : 'daily', keyword);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/default-keyword-toggle' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { type, id } = JSON.parse(body || '{}');
+          const data = defaultKeywords.toggleKeyword(type === 'shopping' ? 'shopping' : 'daily', id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/default-keyword-remove' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { type, id } = JSON.parse(body || '{}');
+          const data = defaultKeywords.removeKeyword(type === 'shopping' ? 'shopping' : 'daily', id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
     if (req.url === '/api/coupang-local') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(coupangLocal.load()));
@@ -3659,6 +4064,36 @@ function startDashboard() {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));
         });
+      return;
+    }
+    if (req.url === '/api/action/coupang-search' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const data = await handleCoupangSearchAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(data));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/coupang-write-from-product' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const draft = await handleCoupangWriteFromProductAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, draft }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     if (req.url === '/api/action/coupang-set-partner' && req.method === 'POST') {
@@ -3902,4 +4337,4 @@ function startDashboard() {
   return { setStatus };
 }
 
-module.exports = { startDashboard, setStatus, pushLog, handleManualPostAction, setThreadsLoginStatus };
+module.exports = { startDashboard, setStatus, pushLog, handleManualPostAction, setThreadsLoginStatus, runAutoEngineCycle };

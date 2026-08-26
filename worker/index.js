@@ -1,7 +1,7 @@
 const { loadConfig } = require('./config');
 const { generateViaClaude, getClaudeAccountEmail, loadAiSource } = require('./generate');
 const { collectBenchmark, checkLoginStatus } = require('./collectBenchmark');
-const { startDashboard, setStatus, handleManualPostAction, setThreadsLoginStatus } = require('./dashboard');
+const { startDashboard, setStatus, handleManualPostAction, setThreadsLoginStatus, runAutoEngineCycle } = require('./dashboard');
 const { addMaterials } = require('./materials');
 const { dueDrafts, removeDraft } = require('./draftQueue');
 
@@ -90,6 +90,7 @@ async function pollLoop() {
         await claimAndRun(config, job);
       }
       await runScheduledPublish();
+      await runAutoEngineCycle();
     } catch (err) {
       console.error('폴링 오류:', err.message);
     }

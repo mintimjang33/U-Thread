@@ -20,9 +20,9 @@ function saveQueue(items) {
   fs.writeFileSync(QUEUE_PATH, JSON.stringify(items, null, 2), 'utf-8');
 }
 
-function addDraft({ type, content, source }) {
+function addDraft({ type, content, source, accountId }) {
   const items = loadQueue();
-  const draft = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, content, source: source || null, createdAt: new Date().toISOString() };
+  const draft = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), type, content, source: source || null, accountId: accountId || null, createdAt: new Date().toISOString() };
   items.unshift(draft);
   saveQueue(items);
   return draft;
