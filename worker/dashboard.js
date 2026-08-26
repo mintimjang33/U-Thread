@@ -5,7 +5,7 @@ const os = require('os');
 const { loadConfig } = require('./config');
 const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCachedAiSource } = require('./generate');
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
-const { scheduleNativePost } = require('./nativeSchedule');
+const { scheduleNativePost, postNowViaBrowser } = require('./nativeSchedule');
 const accounts = require('./accounts');
 const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearAll } = require('./draftQueue');
@@ -219,6 +219,8 @@ async function handleCustomCollectAction(body) {
     minReplies: Number(body?.minReplies) || 0,
     matchMode: type === 'shopping' ? 'both' : 'either',
     accountId: body?.accountId || accounts.load().activeAccountId,
+    maxAgeDays: Number(body?.maxAgeDays) || 0,
+    noRedupe: body?.noRedupe !== false,
   };
 
   const res = await fetch(config.apiBase + '/api/worker/jobs', {
@@ -292,6 +294,20 @@ async function handleScheduleNativeAction(id) {
   const result = await scheduleNativePost(page, item.content, item.scheduledAt);
   removeDraft(id);
   pushLog(`[대시보드] 🧵 "${item.content.slice(0, 20)}..." 쓰레드에 직접 예약 걸림(${new Date(result.scheduledAt).toLocaleString('ko-KR')})`);
+  return result;
+}
+
+// 공식 API 대신 브라우저 자동화로 지금 바로 게시한다 — 선택한 브라우저 계정의 크롬 프로필로 올라간다.
+async function handlePostNowViaBrowserAction(body) {
+  const text = (body?.text || '').trim();
+  if (!text) throw new Error('올릴 글 내용이 없습니다.');
+  const accountId = body?.accountId || accounts.load().activeAccountId;
+  const { browser } = await getOrLaunchBrowser(accountId);
+  const pages = await browser.pages();
+  const page = pages[0] || (await browser.newPage());
+  const result = await postNowViaBrowser(page, text);
+  postLog.logPost({ accountId, type: body?.type });
+  pushLog(`[대시보드] 🧵 브라우저로 실제 게시 완료(계정: ${accountId})`);
   return result;
 }
 
@@ -626,7 +642,7 @@ const PAGE = () => `<!doctype html>
             <h1>📝 일상글 올리기</h1>
             <span style="background:#fef3c7;color:#92400e;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px">예열</span>
           </div>
-          <div class="sub">계정 조회수를 띄우는 게 목적입니다. 좋아요·댓글이 많이 붙은 원본을 골라 표현만 바꿔 올립니다.</div>
+          <div class="sub">계정 조회수를 띄우는 게 목적입니다. 좋아요·댓글이 많이 붙은 원본을 골라 표현만 바꿔 올립니다. 욕설·중복 글은 자동으로 걸러집니다.</div>
 
           <div class="row" style="margin-top:10px"><span class="label">원본 수집</span><span id="dailyBenchInfo">키워드를 입력하거나 비워두면 자동으로 하나 골라요.</span></div>
           <div class="row">
@@ -660,13 +676,21 @@ const PAGE = () => `<!doctype html>
           <h1 style="font-size:15px">✏️ 내가 직접 써서 올리기</h1>
           <div class="sub">글감 AI를 하나도 안 거칩니다. 쓴 글이 그대로 올라갑니다.</div>
           <textarea id="manualPostText" rows="5" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="올릴 글을 그대로 쓰세요. 줄바꿈도 쓴 그대로 올라갑니다."></textarea>
+          <div class="sub" id="manualPostCount" style="margin:2px 0 8px">0자</div>
+          <div class="row">
+            <select id="manualPostMethod" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="api" selected>공식 API로 게시(기본)</option>
+              <option value="browser">브라우저 자동화로 게시</option>
+            </select>
+            <select id="manualPostAccount" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px;display:none"></select>
+          </div>
           <div class="actions">
             <button class="secondary" data-soon="사진 붙이기">📷 사진 붙이기</button>
             <button class="secondary" data-soon="변형하기">🎭 변형하기</button>
             <button class="secondary" data-soon="되돌리기">↩ 되돌리기</button>
             <button id="manualPostBtn">올리기</button>
           </div>
-          <div class="sub">[올리기]는 지금 바로 올립니다. 유쓰레드 웹에서 연동한 쓰레드 계정으로 실제 발행돼요(공식 Meta API 사용, 계정 연동이 안 돼있으면 실패해요).</div>
+          <div class="sub" id="manualPostMethodHint">[올리기]는 지금 바로 올립니다. 유쓰레드 웹에서 연동한 쓰레드 계정으로 실제 발행돼요(공식 Meta API 사용, 계정 연동이 안 돼있으면 실패해요).</div>
           <div id="manualPostMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
         </div>
 
@@ -709,6 +733,14 @@ const PAGE = () => `<!doctype html>
           <h1 style="font-size:15px">✏️ 내가 직접 써서 올리기</h1>
           <div class="sub">쿠팡 링크는 본문엔 안 넣고 첫 댓글로 자동으로 붙어요(광고 티 안 나게). 상품 링크는 유쓰레드 웹의 쿠팡 파트너스 연동에서 가져와요 — 지금은 본문만 이 칸에서 바로 올릴 수 있어요.</div>
           <textarea id="shoppingPostText" rows="5" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="쿠팡 상품 소개 글을 쓰세요."></textarea>
+          <div class="sub" id="shoppingPostCount" style="margin:2px 0 8px">0자</div>
+          <div class="row">
+            <select id="shoppingPostMethod" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+              <option value="api" selected>공식 API로 게시(기본)</option>
+              <option value="browser">브라우저 자동화로 게시</option>
+            </select>
+            <select id="shoppingPostAccount" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px;display:none"></select>
+          </div>
           <div class="actions">
             <button id="shoppingPostBtn" style="background:#2563eb">올리기</button>
           </div>
@@ -775,6 +807,18 @@ const PAGE = () => `<!doctype html>
         </div>
 
         <div class="card" style="max-width:960px">
+          <h1 style="font-size:14px">📥 수집 조건</h1>
+          <div class="sub">원본을 얼마나 최근 글까지 담을지 정합니다. 글이 쓰여진 날 기준입니다(못 읽으면 안 거릅니다). 0을 넣으면 기간 제한이 없습니다.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div><span class="label">일상글 — 최근</span><input type="text" id="customRecencyDaily" value="14" style="max-width:60px" /><span class="label" style="width:auto">일 이내 글만</span></div>
+            <div><span class="label">쇼핑글 — 최근</span><input type="text" id="customRecencyShopping" value="0" style="max-width:60px" /><span class="label" style="width:auto">일 이내 글만</span></div>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#888;margin-top:10px">
+            <input type="checkbox" id="customNoRedupe" checked /> 한 번 수집한 글은 다시 담지 않습니다
+          </label>
+        </div>
+
+        <div class="card" style="max-width:960px">
           <h1 style="font-size:14px">📊 반응 기준(좋아요·댓글)</h1>
           <div class="sub">직접 넣은 검색어로 아무거나 담기지 않게 걸러요. 화면에 보이는 숫자 순서로 추정한 값이라 100% 정확하진 않을 수 있어요.</div>
           <div class="row"><span class="label">일상글 — 좋아요</span><input type="text" id="minLikesDaily" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 또는 댓글</span><input type="text" id="minRepliesDaily" value="0" style="max-width:80px" /><span class="label" style="width:auto">개 (둘 중 하나만 넘으면 통과, 0=제한없음)</span></div>
@@ -786,6 +830,7 @@ const PAGE = () => `<!doctype html>
           <div class="sub">쓰레드 글 주소를 넣으면 열어서 표현만 바꿔 담고, 그냥 글을 붙여넣으면 그대로 담습니다.</div>
           <textarea id="pasteText" rows="4" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="https://www.threads.com/@아이디/post/... 또는 직접 쓴 글"></textarea>
           <div class="actions">
+            <button class="secondary" id="pasteClipboardBtn">📋 클립보드에서 붙여넣기</button>
             <button id="pasteShoppingBtn" style="background:#2563eb">🛒 쇼핑글로 담기</button>
             <button id="pasteDailyBtn">💬 일상글로 담기</button>
           </div>
@@ -918,9 +963,32 @@ const PAGE = () => `<!doctype html>
       <div class="tab-panel" data-panel="schedule">
         <div class="card" style="max-width:720px">
           <h1>⏰ 예약</h1>
-          <div class="sub">[검수] 탭에 있는 글에 게시 시각을 붙여두면, 그 시각에 워커가 자동으로 올려요. 워커가 켜져 있어야 동작해요 — 꺼두면 그 시각이 지나도 안 올라가고, 다시 켜면 밀린 것부터 올라가요.</div>
+          <div class="sub">예약해 둔 글을 계정별로 봅니다. 여러 건을 한꺼번에 예약하려면 아래 [한번에 예약하기]를 누르세요.</div>
+          <div class="sub" style="color:#dc2626">⚠️ 여기서 지워도(예약 취소) 🧵 버튼으로 쓰레드에 직접 건 예약은 그대로 올라갑니다. 정말 안 올리시려면 쓰레드 앱에서 지우셔야 합니다 — 하단 + 글쓰기 → 오른쪽 위 노트 버튼 → 예약글 목록에서 점 3개 → 임시저장본 삭제</div>
           <div class="actions">
             <button class="secondary" id="scheduleRefreshBtn">🔄 새로고침</button>
+            <button id="bulkScheduleToggleBtn">🐣 한번에 예약하기</button>
+          </div>
+          <div id="bulkScheduleArea" style="display:none;margin-top:10px;padding:12px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb">
+            <div class="row">
+              <span class="label">시작 시각</span>
+              <input type="datetime-local" id="bulkScheduleStart" />
+            </div>
+            <div class="row">
+              <span class="label">글 간격</span>
+              <select id="bulkScheduleInterval" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
+                <option value="60">1시간</option>
+                <option value="120" selected>2시간</option>
+                <option value="180">3시간</option>
+                <option value="240">4시간</option>
+              </select>
+            </div>
+            <div class="sub" style="margin:6px 0">검수 대기 중인 글(아직 예약 안 된 것) 순서대로 시작 시각부터 간격을 두고 자동으로 시각을 채워요.</div>
+            <div class="actions">
+              <button id="bulkScheduleApplyBtn">적용</button>
+              <button class="secondary" id="bulkScheduleCancelBtn">취소</button>
+            </div>
+            <div id="bulkScheduleMsg" style="font-size:12px;color:#6d28d9;margin-top:6px;min-height:16px"></div>
           </div>
           <div id="scheduleList" style="margin-top:10px"></div>
         </div>
@@ -1221,29 +1289,67 @@ const PAGE = () => `<!doctype html>
       }
     });
 
-    document.getElementById('manualPostBtn').addEventListener('click', async () => {
-      const text = document.getElementById('manualPostText').value.trim();
-      const msgEl = document.getElementById('manualPostMsg');
-      if (!text) { msgEl.textContent = '❌ 올릴 글을 입력하세요.'; return; }
-      const btn = document.getElementById('manualPostBtn');
-      btn.disabled = true;
-      msgEl.textContent = '초안 생성 중...';
-      try {
-        const res = await fetch('/api/action/post-now', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, type: 'daily' }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '실패');
-        msgEl.textContent = '✅ 실제로 게시됐어요 (threadsPostId: ' + data.threadsPostId + ')';
-        document.getElementById('manualPostText').value = '';
-      } catch (err) {
-        msgEl.textContent = '❌ ' + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    });
+    // ---- 직접 써서 올리기(일상글/쇼핑글 공용) ----
+    async function populateAccountSelect(selectEl) {
+      const res = await fetch('/api/browser-accounts');
+      const data = await res.json();
+      selectEl.innerHTML = data.accounts.map((a) => (
+        '<option value="' + a.id + '"' + (a.id === data.activeAccountId ? ' selected' : '') + '>' +
+        a.label + (a.note ? ' · ' + a.note : '') + '</option>'
+      )).join('');
+    }
+    function wireManualPost(prefix, type) {
+      const textEl = document.getElementById(prefix + 'PostText');
+      const countEl = document.getElementById(prefix + 'PostCount');
+      const methodEl = document.getElementById(prefix + 'PostMethod');
+      const acctEl = document.getElementById(prefix + 'PostAccount');
+      const btn = document.getElementById(prefix + 'PostBtn');
+      const msgEl = document.getElementById(prefix + 'PostMsg');
+      textEl.addEventListener('input', () => { countEl.textContent = textEl.value.length + '자'; });
+      methodEl.addEventListener('change', async () => {
+        if (methodEl.value === 'browser') {
+          await populateAccountSelect(acctEl);
+          acctEl.style.display = '';
+        } else {
+          acctEl.style.display = 'none';
+        }
+      });
+      btn.addEventListener('click', async () => {
+        const text = textEl.value.trim();
+        if (!text) { msgEl.textContent = '❌ 올릴 글을 입력하세요.'; return; }
+        btn.disabled = true;
+        try {
+          if (methodEl.value === 'browser') {
+            msgEl.textContent = '브라우저로 올리는 중...(크롬 창이 떠요)';
+            const res = await fetch('/api/action/post-now-browser', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, type, accountId: acctEl.value }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '실패');
+            msgEl.textContent = '✅ 브라우저로 실제 게시됐어요.';
+          } else {
+            msgEl.textContent = '초안 생성 중...';
+            const res = await fetch('/api/action/post-now', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, type }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '실패');
+            msgEl.textContent = '✅ 실제로 게시됐어요 (threadsPostId: ' + data.threadsPostId + ')';
+          }
+          textEl.value = '';
+          countEl.textContent = '0자';
+        } catch (err) {
+          msgEl.textContent = '❌ ' + err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+    wireManualPost('manual', 'daily');
 
     document.getElementById('dailyKeywordBankBtn').addEventListener('click', () => {
       const base = window.__apiBase || 'https://u-thread.vercel.app';
@@ -1300,29 +1406,7 @@ const PAGE = () => `<!doctype html>
       const base = window.__apiBase || 'https://u-thread.vercel.app';
       window.open(base + '/dashboard/ai-worker', '_blank');
     });
-    document.getElementById('shoppingPostBtn').addEventListener('click', async () => {
-      const text = document.getElementById('shoppingPostText').value.trim();
-      const msgEl = document.getElementById('shoppingPostMsg');
-      if (!text) { msgEl.textContent = '❌ 올릴 글을 입력하세요.'; return; }
-      const btn = document.getElementById('shoppingPostBtn');
-      btn.disabled = true;
-      msgEl.textContent = '게시 중...';
-      try {
-        const res = await fetch('/api/action/post-now', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, type: 'shopping' }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '실패');
-        msgEl.textContent = '✅ 실제로 게시됐어요 (threadsPostId: ' + data.threadsPostId + ')';
-        document.getElementById('shoppingPostText').value = '';
-      } catch (err) {
-        msgEl.textContent = '❌ ' + err.message;
-      } finally {
-        btn.disabled = false;
-      }
-    });
+    wireManualPost('shopping', 'shopping');
 
     // ---- 직접 소싱(커스텀) ----
     async function loadCustomKeywords() {
@@ -1436,12 +1520,14 @@ const PAGE = () => `<!doctype html>
       const minutes = document.getElementById('customDuration').value;
       const minLikes = document.getElementById(type === 'daily' ? 'minLikesDaily' : 'minLikesShopping').value;
       const minReplies = document.getElementById(type === 'daily' ? 'minRepliesDaily' : 'minRepliesShopping').value;
+      const maxAgeDays = document.getElementById(type === 'daily' ? 'customRecencyDaily' : 'customRecencyShopping').value;
+      const noRedupe = document.getElementById('customNoRedupe').checked;
       document.getElementById('customMsg').textContent = '"' + keyword + '" 수집 등록 중...';
       try {
         const res = await fetch('/api/action/custom-collect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, keyword, minutes, minLikes, minReplies }),
+          body: JSON.stringify({ type, keyword, minutes, minLikes, minReplies, maxAgeDays, noRedupe }),
         });
         const result = await res.json();
         if (!res.ok) throw new Error(result.error || '실패');
@@ -1497,6 +1583,16 @@ const PAGE = () => `<!doctype html>
     }
     document.getElementById('pasteDailyBtn').addEventListener('click', () => runPaste('daily'));
     document.getElementById('pasteShoppingBtn').addEventListener('click', () => runPaste('shopping'));
+    document.getElementById('pasteClipboardBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('pasteMsg');
+      try {
+        const text = await navigator.clipboard.readText();
+        document.getElementById('pasteText').value = text;
+        msgEl.textContent = '✅ 클립보드에서 가져왔어요.';
+      } catch (err) {
+        msgEl.textContent = '❌ 클립보드를 못 읽었어요(브라우저 권한 필요할 수 있어요).';
+      }
+    });
 
     // ---- 검수 ----
     async function loadReviewQueue() {
@@ -1765,6 +1861,38 @@ const PAGE = () => `<!doctype html>
       )).join('');
     }
     document.getElementById('scheduleRefreshBtn').addEventListener('click', loadSchedule);
+    document.getElementById('bulkScheduleToggleBtn').addEventListener('click', () => {
+      const area = document.getElementById('bulkScheduleArea');
+      const willOpen = area.style.display === 'none';
+      area.style.display = willOpen ? 'block' : 'none';
+      if (willOpen) document.getElementById('bulkScheduleStart').value = toLocalInputValue(null);
+    });
+    document.getElementById('bulkScheduleCancelBtn').addEventListener('click', () => {
+      document.getElementById('bulkScheduleArea').style.display = 'none';
+    });
+    document.getElementById('bulkScheduleApplyBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('bulkScheduleMsg');
+      const startVal = document.getElementById('bulkScheduleStart').value;
+      const intervalMin = Number(document.getElementById('bulkScheduleInterval').value);
+      if (!startVal) { msgEl.textContent = '❌ 시작 시각을 정해주세요.'; return; }
+      const start = new Date(startVal);
+      const res = await fetch('/api/queue');
+      const data = await res.json();
+      const targets = data.items.filter((d) => !d.scheduledAt);
+      if (!targets.length) { msgEl.textContent = '❌ 예약 안 된 글이 없어요(전부 이미 예약됐거나 검수 대기가 비었어요).'; return; }
+      msgEl.textContent = targets.length + '개에 시각 배정 중...';
+      for (let i = 0; i < targets.length; i++) {
+        const scheduledAt = new Date(start.getTime() + i * intervalMin * 60000).toISOString();
+        await fetch('/api/action/schedule-draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: targets[i].id, scheduledAt }),
+        });
+      }
+      msgEl.textContent = '✅ ' + targets.length + '개 예약 완료';
+      document.getElementById('bulkScheduleArea').style.display = 'none';
+      await loadSchedule();
+    });
     document.addEventListener('click', async (e) => {
       const setBtn = e.target.closest('[data-sched-set]');
       if (setBtn) {
@@ -2436,6 +2564,21 @@ function startDashboard() {
           const draft = scheduleDraft(parsed.id, parsed.scheduledAt || null);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, draft }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/post-now-browser' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const result = await handlePostNowViaBrowserAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: err.message }));

@@ -31,8 +31,8 @@ async function claimAndRun(config, job) {
       // "직접 소싱(커스텀)" 탭에서 건 수집은 이 탭 전용 로컬 글감 창고에도 저장한다
       // (다른 탭 글감 창고와 안 섞이게 분리 보관).
       if (job.input.saveMaterialsAs && output.items?.length) {
-        addMaterials(job.input.saveMaterialsAs, output.items);
-        console.log(`[글감] "${job.input.saveMaterialsAs}" 창고에 ${output.items.length}개 저장 시도(중복 제외)`);
+        addMaterials(job.input.saveMaterialsAs, output.items, { skipDedupe: job.input.noRedupe === false });
+        console.log(`[글감] "${job.input.saveMaterialsAs}" 창고에 ${output.items.length}개 저장 시도`);
       }
     } else if (job.type === 'check_threads_login') {
       const accountId = job.input?.accountId;

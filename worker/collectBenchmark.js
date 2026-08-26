@@ -54,6 +54,28 @@ function parseEngagement(text) {
   return { likes: trailing[0] ?? null, replies: trailing[1] ?? null };
 }
 
+// 흔한 한국어 욕설/비속어 원본을 걸러낸다 — 100% 목록은 아니고, 명백한 것만 최소한으로 막는 용도.
+const PROFANITY_WORDS = ['시발', '씨발', 'ㅅㅂ', '병신', 'ㅂㅅ', '개새끼', '지랄', '좆같', '존나', '개소리', '미친놈', '미친년', '씹', '개새'];
+function containsProfanity(text) {
+  return PROFANITY_WORDS.some((w) => text.includes(w));
+}
+
+// 게시물 카드 앞부분에 "YYYY-MM-DD" 형식으로 작성일이 찍혀있는 경우가 많다(실측 확인). 못 찾으면
+// null을 돌려주고, 호출 쪽에서는 null이면 그냥 통과시킨다(모르는 걸 억지로 거르지 않기 위함).
+function parsePostDate(text) {
+  const m = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  if (!m) return null;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+  return isNaN(d.getTime()) ? null : d;
+}
+function withinRecency(text, maxAgeDays) {
+  if (!maxAgeDays || maxAgeDays <= 0) return true;
+  const d = parsePostDate(text);
+  if (!d) return true;
+  const ageDays = (Date.now() - d.getTime()) / 86400000;
+  return ageDays <= maxAgeDays;
+}
+
 function passesEngagementFilter(engagement, input) {
   const minLikes = Number(input?.minLikes) || 0;
   const minReplies = Number(input?.minReplies) || 0;
@@ -372,6 +394,8 @@ async function collectBenchmark(input) {
 
       for (const c of candidates) {
         if (!c.text.trim()) continue;
+        if (containsProfanity(c.text)) continue;
+        if (!withinRecency(c.text, input?.maxAgeDays)) continue;
         if (items.find((it) => it.content === c.text)) continue;
         const engagement = parseEngagement(c.text);
         if (!passesEngagementFilter(engagement, input)) continue;

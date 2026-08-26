@@ -20,12 +20,13 @@ function saveMaterials(data) {
   fs.writeFileSync(MATERIALS_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-function addMaterials(type, items) {
+function addMaterials(type, items, options) {
+  const skipDedupe = options?.skipDedupe === true;
   const data = loadMaterials();
   if (!data[type]) data[type] = [];
   const existingContents = new Set(data[type].map((m) => m.content));
   for (const item of items) {
-    if (existingContents.has(item.content)) continue; // 한 번 수집한 건 다시 안 담음
+    if (!skipDedupe && existingContents.has(item.content)) continue; // 한 번 수집한 건 다시 안 담음
     data[type].push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), content: item.content, used: false, addedAt: new Date().toISOString() });
   }
   saveMaterials(data);

@@ -57,10 +57,8 @@ async function clickByText(page, exact, timeoutMs = 3000) {
   return true;
 }
 
-async function scheduleNativePost(page, content, scheduledAt) {
-  const target = new Date(scheduledAt);
-  if (isNaN(target.getTime())) throw new Error('예약 시각이 올바르지 않습니다.');
-
+// 작성창을 열고 글 내용을 입력하는 부분은 "지금 게시"와 "예약"이 똑같이 쓴다.
+async function openComposerAndType(page, content) {
   // 창이 백그라운드에 있으면 포커스 의존적인 상호작용(모달 닫힘 등)이 불안정해진다.
   await page.bringToFront();
   await page.goto('https://www.threads.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -81,7 +79,27 @@ async function scheduleNativePost(page, content, scheduledAt) {
   await new Promise((r) => setTimeout(r, 500));
   await page.keyboard.type(content);
   await new Promise((r) => setTimeout(r, 500));
+}
 
+// 크롬 창을 직접 눌러서 지금 바로 게시한다(공식 API 대신 브라우저 자동화 경로).
+async function postNowViaBrowser(page, content) {
+  await openComposerAndType(page, content);
+  await page.bringToFront();
+
+  const submitOk = await clickByText(page, '게시');
+  if (!submitOk) {
+    const f = await saveFailureScreenshot(page, 'no-post-now-button');
+    throw new Error('"게시" 버튼을 찾지 못했습니다.' + (f ? ` (스크린샷: ${f})` : ''));
+  }
+  await new Promise((r) => setTimeout(r, 2000));
+  return { postedAt: new Date().toISOString() };
+}
+
+async function scheduleNativePost(page, content, scheduledAt) {
+  const target = new Date(scheduledAt);
+  if (isNaN(target.getTime())) throw new Error('예약 시각이 올바르지 않습니다.');
+
+  await openComposerAndType(page, content);
   await page.bringToFront();
   const moreOk = await page.evaluate(() => {
     const svgs = [...document.querySelectorAll('svg[aria-label="더 보기"]')];
@@ -235,4 +253,4 @@ async function cancelScheduledPost(page, contentSnippet) {
   return { screenshotSaved: true };
 }
 
-module.exports = { scheduleNativePost, cancelScheduledPost };
+module.exports = { scheduleNativePost, cancelScheduledPost, postNowViaBrowser };
