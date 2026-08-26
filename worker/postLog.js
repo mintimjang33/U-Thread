@@ -54,4 +54,8 @@ function summaryByAccount() {
   return result;
 }
 
-module.exports = { logPost, summaryByAccount };
+function totalCount() {
+  return load().length;
+}
+
+module.exports = { logPost, summaryByAccount, totalCount };

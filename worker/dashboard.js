@@ -873,6 +873,20 @@ const PAGE = () => `<!doctype html>
             <button class="secondary" id="reviewRefreshBtn">🔄 새로고침</button>
           </div>
           <div class="sub">일상글 바로쓰기·직접소싱·붙여넣기로 담긴 글이 여기 쌓여요. 실제로 게시하려면 [지금 게시]를 누르세요.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:10px 0">
+            <div style="background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
+              <div id="reviewStatPending" style="font-size:22px;font-weight:900;color:#f59e0b">0</div>
+              <div class="sub" style="margin:0">대기</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
+              <div id="reviewStatApproved" style="font-size:22px;font-weight:900;color:#16a34a">0</div>
+              <div class="sub" style="margin:0">승인</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
+              <div id="reviewStatPublished" style="font-size:22px;font-weight:900;color:#2563eb">0</div>
+              <div class="sub" style="margin:0">게시됨</div>
+            </div>
+          </div>
           <div class="actions">
             <button class="secondary" id="reviewRewriteAllBtn">🔄 전체 다시쓰기</button>
             <button class="secondary" id="reviewClearAllBtn" style="color:#dc2626;border-color:#fca5a5">🗑 대기 비우기</button>
@@ -902,6 +916,34 @@ const PAGE = () => `<!doctype html>
         <div class="card" style="max-width:720px">
           <h1>🔵 토스링크 <span style="font-size:11px;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:999px">테스트</span></h1>
           <div class="sub">토스쇼핑 쉐어링크를 모아 두고, 정산 제출까지 챙기는 곳이에요. 토스쇼핑 쉐어링크에 쓸 수 있는 공개 API가 확인되지 않아 자동 연결은 없어요 — 링크는 직접 만들어서 저장해두는 방식이에요.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">💳 수수료·기한</h1>
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div>
+              <div style="font-size:26px;font-weight:900;color:#16a34a">10%</div>
+              <div class="sub" style="margin:0">토스쇼핑 쉐어링크 · 쿠팡 파트너스는 7%</div>
+            </div>
+            <div>
+              <div id="tossDday" style="font-size:22px;font-weight:900;color:#f59e0b"></div>
+              <div class="sub" style="margin:0">2026-09-25 까지 10%(이후 정책 재확인 필요)</div>
+            </div>
+            <a href="https://shopping.toss.im/" target="_blank"><button style="background:#f59e0b">토스쇼핑 열기 ↗</button></a>
+          </div>
+          <div class="sub" style="color:#dc2626">⚠️ 10%는 한시입니다. 기한이 지나면 쿠팡과 다시 비교해야 합니다. (이 숫자는 원본 참고 도구에 표시된 값을 그대로 옮긴 것으로, 저희가 직접 검증한 건 아니에요 — 실제 정산 전 토스쇼핑에서 최신 정책을 꼭 확인하세요.)</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🔑 토스 API 연결</h1>
+          <div class="sub">키를 넣어 두면 앞으로 자동 연결에 씁니다.</div>
+          <div class="sub" style="color:#dc2626">⚠️ 지금은 보관만 합니다. 토스쇼핑 쉐어링크에 쓸 수 있는 공개 API가 확인되지 않아, 연결 테스트나 링크 자동 생성은 아직 없습니다 — 없는 걸 있는 척 만들지 않았습니다.</div>
+          <div class="row">
+            <input type="text" id="tossApiKeyInput" placeholder="토스 API 키(있으면)" />
+            <button id="tossSaveKeyBtn">💾 저장</button>
+            <button class="secondary" id="tossClearKeyBtn">지우기</button>
+          </div>
+          <div class="sub" id="tossKeyStatus">아직 키가 없습니다. 없어도 링크 저장·제출 체크는 그대로 됩니다.</div>
         </div>
 
         <div class="card" style="max-width:720px">
@@ -954,12 +996,50 @@ const PAGE = () => `<!doctype html>
 
       <div class="tab-panel" data-panel="revenue">
         <div class="card" style="max-width:720px">
-          <h1>💰 수익</h1>
-          <div class="sub">쿠팡 파트너스(쿠파스) 실적입니다. 쿠팡파트너스는 클릭/전환 실적을 공개적으로 확인할 수 있는 API가 문서화돼 있지 않아서(2026-08-25 기준 확인), 정확한 수익은 쿠팡파트너스 사이트에서 직접 확인해야 해요.</div>
-          <div class="row"><span class="label">쿠팡 API 키</span><span id="revenueKeyStatus">확인 중...</span></div>
-          <div class="actions" style="margin-top:8px">
-            <a href="https://partners.coupang.com" target="_blank"><button class="secondary">쿠팡파트너스 실적 페이지 열기 ↗</button></a>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1>💰 수익</h1>
+            <span style="background:#dbeafe;color:#1e40af;font-size:11px;font-weight:900;padding:3px 10px;border-radius:999px">수익</span>
           </div>
+          <div class="sub">쿠팡 파트너스(쿠파스) 실적입니다. 쿠팡파트너스는 클릭/전환 실적을 공개적으로 확인할 수 있는 API가 문서화돼 있지 않아요(2026-08-26 재확인) — 아래 숫자는 실제 데이터가 아니라 항상 0으로 표시돼요. 정확한 수익은 쿠팡파트너스 사이트에서 직접 확인해야 해요.</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">쿠파스 수익</h1>
+            <button class="secondary" id="revenueRefreshBtn">갱신</button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:10px 0">
+            <div style="background:#f9fafb;border-radius:8px;padding:14px;text-align:center">
+              <div style="font-size:20px;font-weight:900">0원</div>
+              <div class="sub" style="margin:0">총수익</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:14px;text-align:center">
+              <div style="font-size:20px;font-weight:900">0원</div>
+              <div class="sub" style="margin:0">최근수익</div>
+            </div>
+            <div style="background:#f9fafb;border-radius:8px;padding:14px;text-align:center">
+              <div style="font-size:20px;font-weight:900">0원</div>
+              <div class="sub" style="margin:0">최고</div>
+            </div>
+          </div>
+          <div class="sub" id="revenueKeyStatus">확인 중...</div>
+          <div id="revenueMsg" style="font-size:12px;color:#6d28d9;margin-top:6px;min-height:16px"></div>
+          <div class="actions" style="margin-top:8px">
+            <a href="https://partners.coupang.com" target="_blank" style="flex:1"><button class="secondary" style="width:100%">수익 리포트</button></a>
+            <a href="https://partners.coupang.com" target="_blank" style="flex:1"><button class="secondary" style="width:100%">링크 생성</button></a>
+          </div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">📊 날짜별 수익·조회수</h1>
+            <button class="secondary" id="revenueTableRefreshBtn">갱신</button>
+          </div>
+          <div style="overflow-x:auto">
+            <table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:8px" id="revenueTable"></table>
+          </div>
+          <div class="sub" style="margin-top:6px">이 기간 합계 0원</div>
+          <div class="sub">쿠팡파트너스에 실적 조회 API가 확인되지 않아, 조회수·수익 갱신 기능은 아직 없어요 — 없는 걸 있는 척 만들지 않았어요.</div>
         </div>
       </div>
 
@@ -1618,6 +1698,11 @@ const PAGE = () => `<!doctype html>
     async function loadReviewQueue() {
       const res = await fetch('/api/queue');
       const data = await res.json();
+      const statRes = await fetch('/api/review-stats');
+      const stats = await statRes.json();
+      document.getElementById('reviewStatPending').textContent = data.items.length;
+      document.getElementById('reviewStatApproved').textContent = stats.approved;
+      document.getElementById('reviewStatPublished').textContent = stats.published;
       const el = document.getElementById('reviewList');
       if (!data.items.length) {
         el.innerHTML = '<div class="sub" style="margin-top:10px">검수할 글이 없습니다. [일상글/쇼핑글/직접소싱]에서 먼저 글을 만들어보세요.</div>';
@@ -1730,6 +1815,16 @@ const PAGE = () => `<!doctype html>
     async function loadToss() {
       const res = await fetch('/api/toss');
       const data = await res.json();
+
+      const deadline = new Date('2026-09-25T23:59:59+09:00');
+      const dDays = Math.ceil((deadline.getTime() - Date.now()) / 86400000);
+      document.getElementById('tossDday').textContent = dDays >= 0 ? 'D-' + dDays : '기한 지남';
+
+      document.getElementById('tossApiKeyInput').value = data.apiKey || '';
+      document.getElementById('tossKeyStatus').textContent = data.apiKey
+        ? '✅ 키 저장됨(연결 테스트는 아직 없음)'
+        : '아직 키가 없습니다. 없어도 링크 저장·제출 체크는 그대로 됩니다.';
+
       const linksEl = document.getElementById('tossLinksList');
       linksEl.innerHTML = (data.links || []).length
         ? data.links.map((l) => (
@@ -1749,6 +1844,24 @@ const PAGE = () => `<!doctype html>
           )).join('')
         : '<div class="sub">아직 담아 둔 글이 없습니다.</div>';
     }
+    document.getElementById('tossSaveKeyBtn').addEventListener('click', async () => {
+      const apiKey = document.getElementById('tossApiKeyInput').value.trim();
+      await fetch('/api/action/toss-set-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+      await loadToss();
+    });
+    document.getElementById('tossClearKeyBtn').addEventListener('click', async () => {
+      document.getElementById('tossApiKeyInput').value = '';
+      await fetch('/api/action/toss-set-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: null }),
+      });
+      await loadToss();
+    });
     document.getElementById('tossAddLinkBtn').addEventListener('click', async () => {
       const keyword = document.getElementById('tossKeyword').value.trim();
       const url = document.getElementById('tossUrl').value.trim();
@@ -1844,7 +1957,35 @@ const PAGE = () => `<!doctype html>
         el.textContent = '❌ ' + err.message;
       }
     }
-    document.querySelector('.navitem[data-tab="revenue"]').addEventListener('click', () => loadKeyStatus('revenueKeyStatus'));
+    function buildRevenueTable() {
+      const rows = [];
+      const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(Date.now() - i * 86400000);
+        const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+        const label = (d.getMonth() + 1) + '/' + d.getDate() + ' (' + dayNames[d.getDay()] + ')';
+        rows.push(
+          '<tr style="border-top:1px solid #eee' + (isWeekend ? ';color:#dc2626' : '') + '">' +
+          '<td style="padding:6px 4px">' + label + '</td>' +
+          '<td style="padding:6px 4px;text-align:right">–</td>' +
+          '<td style="padding:6px 4px;text-align:right">–</td>' +
+          '<td style="padding:6px 4px;text-align:right">–</td>' +
+          '</tr>'
+        );
+      }
+      document.getElementById('revenueTable').innerHTML =
+        '<tr style="color:#888;text-align:left"><th style="padding:6px 4px;font-weight:600">날짜</th><th style="padding:6px 4px;text-align:right;font-weight:600">수익금</th><th style="padding:6px 4px;text-align:right;font-weight:600">클릭</th><th style="padding:6px 4px;text-align:right;font-weight:600">조회수</th></tr>' +
+        rows.join('');
+    }
+    document.querySelector('.navitem[data-tab="revenue"]').addEventListener('click', () => {
+      loadKeyStatus('revenueKeyStatus');
+      buildRevenueTable();
+    });
+    document.getElementById('revenueRefreshBtn').addEventListener('click', () => {
+      document.getElementById('revenueMsg').textContent = '❌ 쿠팡파트너스에 실적 조회 API가 확인되지 않아, 갱신할 수 있는 실데이터가 없어요.';
+    });
+    document.getElementById('revenueTableRefreshBtn').addEventListener('click', buildRevenueTable);
+    buildRevenueTable();
     document.querySelector('.navitem[data-tab="coupang"]').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
     document.getElementById('coupangCheckBtn').addEventListener('click', () => loadKeyStatus('coupangKeyStatus'));
     document.getElementById('coupangOpenBtn').addEventListener('click', () => {
@@ -2537,6 +2678,12 @@ function startDashboard() {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+      return;
+    }
+    if (req.url === '/api/review-stats') {
+      // "승인"은 우리 파이프라인엔 별도 승인 단계가 없어서 항상 0 — 없는 걸 있는 척 보여주지 않음.
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ approved: 0, published: postLog.totalCount() }));
       return;
     }
     if (req.url === '/api/queue') {
