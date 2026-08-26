@@ -191,9 +191,9 @@ async function handleManualPostAction(body) {
   return publishData;
 }
 
-function buildRewritePrompt(type, sourceText) {
+function buildRewritePrompt(type, sourceText, accountId) {
   const styleNote = type === 'shopping' ? '쇼핑/제품 소개 느낌으로, 광고 티 안 나게 자연스럽게' : '평범한 일상 공유 느낌으로';
-  const personaNote = persona.load().note;
+  const personaNote = persona.getEffectiveNote(accountId || accounts.load().activeAccountId);
   return `아래는 실제로 반응이 좋았던 쓰레드(Threads) 게시물이다. 표현과 구조(훅 방식, 문장 길이, 이모지 사용)만 참고해서, 완전히 새로운 내용으로 다시 써라. 그대로 베끼면 안 되고, 욕설/과도한 광고 문구는 쓰지 않는다. ${styleNote}.
 말투 지침(반드시 따를 것): ${personaNote}
 결과는 게시물 본문 텍스트만 출력해라(설명이나 따옴표 없이).
@@ -240,9 +240,10 @@ async function handleCustomWriteAction(body) {
   const materials = takeUnusedMaterials(type, count);
   if (!materials.length) throw new Error('글감 창고가 비었어요 — 먼저 원본 수집을 하세요.');
 
+  const accountId = body?.accountId || accounts.load().activeAccountId;
   const drafts = [];
   for (const m of materials) {
-    const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
+    const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
     drafts.push(addDraft({ type, content, source: '직접소싱' }));
   }
   pushLog(`[대시보드] 직접소싱 바로쓰기로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
@@ -260,12 +261,13 @@ async function handleConvertSelectedMaterialsAction(body) {
     else byType.daily.push(it.id);
   }
 
+  const accountId = body?.accountId || accounts.load().activeAccountId;
   const drafts = [];
   for (const type of ['daily', 'shopping']) {
     if (!byType[type].length) continue;
     const materials = takeMaterialsByIds(type, byType[type]);
     for (const m of materials) {
-      const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
+      const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
       drafts.push(addDraft({ type, content, source: '글감창고(선택 변환)' }));
     }
   }
@@ -285,7 +287,7 @@ async function handlePasteAction(body) {
   if (isUrl) {
     pushLog(`[대시보드] 링크에서 게시물 가져오는 중: ${raw}`);
     const sourceText = await scrapeThreadsPost(raw, accountId);
-    content = (await generateContent(buildRewritePrompt(type, sourceText))).trim();
+    content = (await generateContent(buildRewritePrompt(type, sourceText, accountId))).trim();
     source = '벤치 링크';
   } else {
     content = raw; // 직접 쓴 글은 AI를 거치지 않고 그대로 담는다.
@@ -353,8 +355,9 @@ async function handleQueueRewriteAllAction() {
   for (const [type, count] of [['daily', dailyCount], ['shopping', shoppingCount]]) {
     if (!count) continue;
     const materials = takeUnusedMaterials(type, count);
+    const accountId = accounts.load().activeAccountId;
     for (const m of materials) {
-      const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
+      const content = (await generateContent(buildRewritePrompt(type, m.content, accountId))).trim();
       drafts.push(addDraft({ type, content, source: '전체 다시쓰기' }));
     }
     if (materials.length < count) {
@@ -377,9 +380,24 @@ async function handlePersonaAnalyzeAction(body) {
 ${sourceText.slice(0, 800)}
 ===게시물 끝===`;
   const note = (await generateContent(prompt)).trim();
-  persona.save({ note, sourceHandle: raw });
-  pushLog(`[대시보드] 페르소나 적용됨: ${note.slice(0, 60)}...`);
-  return { note };
+  const profile = persona.addProfile({ name: raw, note, sourceHandle: raw });
+  // apply:false면 "카드만 만들기(빠름)" — 라이브러리에만 저장하고 전역 적용은 안 함.
+  if (body?.apply !== false) {
+    persona.setMode('manual');
+    persona.setActiveProfile(profile.id);
+    pushLog(`[대시보드] 페르소나 일괄 적용됨: ${note.slice(0, 60)}...`);
+  } else {
+    pushLog(`[대시보드] 페르소나 카드 저장됨(아직 적용 안 함): ${note.slice(0, 60)}...`);
+  }
+  return { profile };
+}
+
+async function handlePersonaPreviewAction() {
+  const accountId = accounts.load().activeAccountId;
+  const note = persona.getEffectiveNote(accountId);
+  const prompt = `말투 지침(반드시 따를 것): ${note}\n\n위 말투로, 평범한 일상 하나를 소재 삼아 쓰레드(Threads)에 올릴 짧은 글 하나를 써라(2~4문장). 결과는 본문 텍스트만 출력해라(설명이나 따옴표 없이).`;
+  const sample = (await generateContent(prompt)).trim();
+  return { sample };
 }
 
 async function handleLearnAccountsAction(body) {
@@ -429,7 +447,7 @@ async function handleChannelWriteAction(body) {
   if (!data) throw new Error('먼저 계정을 배우세요.');
   const count = Math.max(1, Math.min(3, Number(body?.count) || 1));
   const type = body?.type === 'shopping' ? 'shopping' : 'daily';
-  const personaNote = persona.load().note;
+  const personaNote = persona.getEffectiveNote(body?.accountId || accounts.load().activeAccountId);
 
   const samples = data.samplePosts.sort(() => Math.random() - 0.5).slice(0, 2);
   const drafts = [];
@@ -1002,26 +1020,47 @@ const PAGE = () => `<!doctype html>
       <div class="tab-panel" data-panel="persona">
         <div class="card" style="max-width:720px">
           <h1>🎭 페르소나</h1>
-          <div class="sub">글을 쓰는 말투를 정하는 곳이에요. 아무것도 안 하면 기본 말투로 써요. 닮고 싶은 계정이 있으면 링크를 넣으세요 — 글을 읽어 말투를 분석한 뒤 그대로 씁니다.</div>
+          <div class="sub">글을 쓰는 말투를 정하는 곳이에요. 아무것도 안 하면 기본 말투로 써요. 여러 벌을 만들어 라이브러리로 저장해두고, 계정마다 다른 말투를 지정할 수도 있어요.</div>
           <div class="sub">페르소나는 말투만 바꿉니다. 사별·폭력·정치·주식·병원 같은 민감 소재는 페르소나와 무관하게 원본 수집 단계에서 항상 걸러져요.</div>
         </div>
 
         <div class="card" style="max-width:720px">
-          <h1 style="font-size:14px">지금 적용 중</h1>
-          <div id="personaNoteView" class="sub" style="color:#333"></div>
+          <h1 style="font-size:14px">기본 모드</h1>
+          <div class="sub">직접 고르기를 켜면 아래 라이브러리에서 "사용" 누른 말투가 전체 계정의 기본값이 돼요. 아래 "계정별로 다르게"에서 따로 지정한 계정은 이 설정과 상관없이 그 지정이 항상 우선이에요.</div>
           <div class="actions" style="margin-top:8px">
-            <button class="secondary" id="personaResetBtn">↩ 기본 말투로</button>
+            <label style="display:inline-flex;align-items:center;gap:4px"><input type="radio" name="personaMode" value="fixed" /> 고정(기본 말투)</label>
+            <label style="display:inline-flex;align-items:center;gap:4px"><input type="radio" name="personaMode" value="manual" /> 직접 고르기</label>
           </div>
+          <div id="personaCurrentNote" class="sub" style="color:#333;margin-top:8px"></div>
+          <div class="actions" style="margin-top:6px">
+            <button class="secondary" id="personaPreviewBtn">✨ 지금 말투로 예시 써보기</button>
+            <button class="secondary" id="personaResetBtn">↩ 기본 말투로 초기화</button>
+          </div>
+          <div id="personaPreviewMsg" class="sub" style="margin-top:6px;min-height:16px"></div>
         </div>
 
         <div class="card" style="max-width:720px">
           <h1 style="font-size:14px">🪞 닮고 싶은 계정으로 분석</h1>
-          <div class="sub">닮고 싶은 계정의 @핸들이나 프로필/게시물 주소를 넣으면, 그 계정 글을 읽어 말투를 분석한 뒤 앞으로 쓰는 모든 글이 그 말투를 따르게 해요.</div>
+          <div class="sub">닮고 싶은 계정의 @핸들이나 프로필/게시물 주소를 넣으면, 그 계정 글을 읽어 말투를 분석해요. "전체에 일괄 적용"은 바로 모든 계정 기본값으로 쓰고, "카드만 만들기"는 라이브러리에 저장만 해두고 나중에 필요할 때 골라 씁니다.</div>
           <div class="row">
             <input type="text" id="personaHandle" placeholder="@handle 또는 https://www.threads.com/@handle 또는 게시물 링크" />
-            <button id="personaAnalyzeBtn">분석해서 적용</button>
+          </div>
+          <div class="actions" style="margin-top:8px">
+            <button id="personaAnalyzeApplyBtn">🔁 페르소나 일괄 바꾸기</button>
+            <button class="secondary" id="personaAnalyzeCardBtn">카드만 만들기(빠름)</button>
           </div>
           <div id="personaMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">📚 만들어 둔 말투</h1>
+          <div id="personaLibraryList" class="sub">불러오는 중...</div>
+        </div>
+
+        <div class="card" style="max-width:720px">
+          <h1 style="font-size:14px">🎯 계정별로 다르게</h1>
+          <div class="sub">특정 계정만 다른 말투를 강제로 쓰고 싶을 때 지정하세요.</div>
+          <div id="personaAccountOverrides" class="sub">불러오는 중...</div>
         </div>
       </div>
 
@@ -2011,34 +2050,114 @@ const PAGE = () => `<!doctype html>
     async function loadPersona() {
       const res = await fetch('/api/persona');
       const data = await res.json();
-      document.getElementById('personaNoteView').textContent = data.note + (data.sourceHandle ? ' (출처: ' + data.sourceHandle + ')' : ' (고정)');
+      document.querySelectorAll('input[name="personaMode"]').forEach((r) => { r.checked = r.value === data.mode; });
+      const activeProfile = data.profiles.find((p) => p.id === data.activeProfileId);
+      document.getElementById('personaCurrentNote').textContent =
+        data.mode === 'manual' && activeProfile
+          ? '적용 중: ' + activeProfile.name + ' — ' + activeProfile.note
+          : '적용 중: 기본 말투(20~30대 여성 특유의 친근하고 공감가는 말투)';
+      renderPersonaLibrary(data);
+      await renderPersonaAccountOverrides(data);
     }
-    document.getElementById('personaAnalyzeBtn').addEventListener('click', async () => {
+    function renderPersonaLibrary(data) {
+      const el = document.getElementById('personaLibraryList');
+      if (!data.profiles.length) {
+        el.innerHTML = '<div class="sub">아직 저장된 말투가 없어요. 아래에서 계정을 분석해 만들어보세요.</div>';
+        return;
+      }
+      el.innerHTML = data.profiles.map((p) => (
+        '<div class="row" style="align-items:center;border-bottom:1px solid #eee;padding:8px 0;gap:8px">' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-weight:700">' + p.name + (data.mode === 'manual' && data.activeProfileId === p.id ? ' · <span style="color:#6d28d9">사용 중</span>' : '') + '</div>' +
+            '<div class="sub" style="margin:0">' + p.note + '</div>' +
+          '</div>' +
+          '<button class="secondary" data-persona-use="' + p.id + '">사용</button>' +
+          '<button class="secondary" data-persona-del="' + p.id + '">삭제</button>' +
+        '</div>'
+      )).join('');
+      el.querySelectorAll('[data-persona-use]').forEach((btn) => btn.addEventListener('click', async () => {
+        await fetch('/api/action/persona-set-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'manual' }) });
+        await fetch('/api/action/persona-set-active', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profileId: btn.dataset.personaUse }) });
+        await loadPersona();
+      }));
+      el.querySelectorAll('[data-persona-del]').forEach((btn) => btn.addEventListener('click', async () => {
+        if (!confirm('이 말투를 삭제할까요? 이 말투를 쓰던 계정 지정도 함께 풀려요.')) return;
+        await fetch('/api/action/persona-remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: btn.dataset.personaDel }) });
+        await loadPersona();
+      }));
+    }
+    async function renderPersonaAccountOverrides(data) {
+      const el = document.getElementById('personaAccountOverrides');
+      const res = await fetch('/api/browser-accounts');
+      const accData = await res.json();
+      if (!accData.accounts.length) {
+        el.innerHTML = '<div class="sub">등록된 브라우저 계정이 없어요 — [계정] 탭에서 먼저 추가하세요.</div>';
+        return;
+      }
+      el.innerHTML = accData.accounts.map((a) => {
+        const overrideId = data.accountOverrides[a.id] || '';
+        const options = ['<option value="">(지정 안 함 · 기본 모드 따름)</option>'].concat(
+          data.profiles.map((p) => '<option value="' + p.id + '"' + (p.id === overrideId ? ' selected' : '') + '>' + p.name + '</option>')
+        ).join('');
+        return (
+          '<div class="row" style="align-items:center;padding:6px 0;gap:8px">' +
+            '<div style="flex:1;min-width:0">' + a.label + (a.note ? ' · ' + a.note : '') + '</div>' +
+            '<select data-persona-override="' + a.id + '">' + options + '</select>' +
+          '</div>'
+        );
+      }).join('');
+      el.querySelectorAll('[data-persona-override]').forEach((sel) => sel.addEventListener('change', async () => {
+        await fetch('/api/action/persona-override', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId: sel.dataset.personaOverride, profileId: sel.value || null }) });
+        await loadPersona();
+      }));
+    }
+    document.querySelectorAll('input[name="personaMode"]').forEach((r) => r.addEventListener('change', async () => {
+      await fetch('/api/action/persona-set-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: r.value }) });
+      await loadPersona();
+    }));
+    async function runPersonaAnalyze(apply) {
       const handle = document.getElementById('personaHandle').value.trim();
       const msgEl = document.getElementById('personaMsg');
       if (!handle) { msgEl.textContent = '❌ 계정을 입력하세요.'; return; }
-      const btn = document.getElementById('personaAnalyzeBtn');
-      btn.disabled = true;
+      const applyBtn = document.getElementById('personaAnalyzeApplyBtn');
+      const cardBtn = document.getElementById('personaAnalyzeCardBtn');
+      applyBtn.disabled = true;
+      cardBtn.disabled = true;
       msgEl.textContent = '분석 중... (크롬으로 그 계정 글을 열어봐요, 10~20초 걸려요)';
       try {
         const res = await fetch('/api/action/persona-analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ handle }),
+          body: JSON.stringify({ handle, apply }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
-        msgEl.textContent = '✅ 적용됐어요. 앞으로 만드는 글이 이 말투를 따라요.';
+        msgEl.textContent = apply ? '✅ 전체에 일괄 적용됐어요.' : '✅ 카드로 저장했어요(아직 적용 안 함) — 아래 라이브러리에서 "사용"을 누르면 적용돼요.';
         await loadPersona();
       } catch (err) {
         msgEl.textContent = '❌ ' + err.message;
       } finally {
-        btn.disabled = false;
+        applyBtn.disabled = false;
+        cardBtn.disabled = false;
       }
-    });
+    }
+    document.getElementById('personaAnalyzeApplyBtn').addEventListener('click', () => runPersonaAnalyze(true));
+    document.getElementById('personaAnalyzeCardBtn').addEventListener('click', () => runPersonaAnalyze(false));
     document.getElementById('personaResetBtn').addEventListener('click', async () => {
       await fetch('/api/action/persona-reset', { method: 'POST' });
       await loadPersona();
+    });
+    document.getElementById('personaPreviewBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('personaPreviewMsg');
+      msgEl.textContent = '예시 쓰는 중...';
+      try {
+        const res = await fetch('/api/action/persona-preview', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '💬 "' + data.sample + '"';
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
     });
     document.querySelector('.navitem[data-tab="persona"]').addEventListener('click', loadPersona);
 
@@ -2988,10 +3107,86 @@ function startDashboard() {
       });
       return;
     }
+    if (req.url === '/api/action/persona-preview' && req.method === 'POST') {
+      handlePersonaPreviewAction()
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...result }));
+        })
+        .catch((err) => {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+      return;
+    }
     if (req.url === '/api/action/persona-reset' && req.method === 'POST') {
       const data = persona.reset();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, ...data }));
+      return;
+    }
+    if (req.url === '/api/action/persona-remove' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { id } = JSON.parse(body || '{}');
+          const data = persona.removeProfile(id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/persona-set-mode' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { mode } = JSON.parse(body || '{}');
+          const data = persona.setMode(mode);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/persona-set-active' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { profileId } = JSON.parse(body || '{}');
+          const data = persona.setActiveProfile(profileId);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/persona-override' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const { accountId, profileId } = JSON.parse(body || '{}');
+          const data = persona.setAccountOverride(accountId, profileId);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     if (req.url.startsWith('/api/key-status')) {
