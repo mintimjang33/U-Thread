@@ -60,6 +60,24 @@ function containsProfanity(text) {
   return PROFANITY_WORDS.some((w) => text.includes(w));
 }
 
+// 페르소나(말투)와 무관하게 항상 걸러야 하는 민감 소재 — 광고 계정이 이런 원본을 베끼면 계정 정지
+// 위험이 크다. 키워드 기반이라 완벽하진 않고, 원본에 이 단어가 있으면 무조건 스킵하는 최소한의 안전망.
+const TABOO_TOPIC_WORDS = [
+  // 사별
+  '상을 당했', '돌아가셨', '부고', '장례식', '사별', '유족',
+  // 폭력
+  '폭행', '폭력', '살인', '살해', '흉기', '폭탄', '테러',
+  // 정치
+  '대통령', '국회의원', '여당', '야당', '탄핵', '총선', '대선',
+  // 주식
+  '주가', '코스피', '코스닥', '종목 추천', '급등주', '테마주',
+  // 병원/의료
+  '수술', '입원', '진단받', '항암', '중환자',
+];
+function containsTabooTopic(text) {
+  return TABOO_TOPIC_WORDS.some((w) => text.includes(w));
+}
+
 // 게시물 카드 앞부분에 "YYYY-MM-DD" 형식으로 작성일이 찍혀있는 경우가 많다(실측 확인). 못 찾으면
 // null을 돌려주고, 호출 쪽에서는 null이면 그냥 통과시킨다(모르는 걸 억지로 거르지 않기 위함).
 function parsePostDate(text) {
@@ -395,6 +413,7 @@ async function collectBenchmark(input) {
       for (const c of candidates) {
         if (!c.text.trim()) continue;
         if (containsProfanity(c.text)) continue;
+        if (containsTabooTopic(c.text)) continue;
         if (!withinRecency(c.text, input?.maxAgeDays)) continue;
         if (items.find((it) => it.content === c.text)) continue;
         const engagement = parseEngagement(c.text);

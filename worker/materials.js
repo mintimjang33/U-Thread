@@ -49,4 +49,16 @@ function removeMaterial(type, id) {
   saveMaterials(data);
 }
 
-module.exports = { loadMaterials, addMaterials, takeUnusedMaterials, removeMaterial };
+// 글감 창고에서 사용자가 직접 체크한 것만 골라 변환할 때 쓴다 — used 여부와 상관없이 지정한 것만 꺼내고,
+// 꺼낸 것은 used로 표시한다(같은 걸 두 번 안 담기 위함).
+function takeMaterialsByIds(type, ids) {
+  const data = loadMaterials();
+  const list = data[type] || [];
+  const idSet = new Set(ids);
+  const picked = list.filter((m) => idSet.has(m.id));
+  data[type] = list.map((m) => (idSet.has(m.id) ? { ...m, used: true } : m));
+  saveMaterials(data);
+  return picked;
+}
+
+module.exports = { loadMaterials, addMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial };

@@ -7,7 +7,7 @@ const { getClaudeAccountEmail, generateContent, loadAiSource, setAiSource, getCa
 const { closeBrowser, scrapeThreadsPost, scrapeProfilePosts, getOrLaunchBrowser } = require('./collectBenchmark');
 const { scheduleNativePost, postNowViaBrowser } = require('./nativeSchedule');
 const accounts = require('./accounts');
-const { loadMaterials, takeUnusedMaterials, removeMaterial } = require('./materials');
+const { loadMaterials, takeUnusedMaterials, takeMaterialsByIds, removeMaterial } = require('./materials');
 const { loadQueue, addDraft, removeDraft, scheduleDraft, unscheduleDraft, clearAll } = require('./draftQueue');
 const tossLinks = require('./tossLinks');
 const persona = require('./persona');
@@ -246,6 +246,30 @@ async function handleCustomWriteAction(body) {
     drafts.push(addDraft({ type, content, source: '직접소싱' }));
   }
   pushLog(`[대시보드] 직접소싱 바로쓰기로 ${drafts.length}개 생성 → [검수] 탭에 추가됨`);
+  return drafts;
+}
+
+// 글감 창고에서 사용자가 직접 체크한 것만 변환한다 — items: [{id, type}, ...]
+async function handleConvertSelectedMaterialsAction(body) {
+  const items = Array.isArray(body?.items) ? body.items : [];
+  if (!items.length) throw new Error('변환할 글감을 먼저 선택하세요.');
+
+  const byType = { daily: [], shopping: [] };
+  for (const it of items) {
+    if (it?.type === 'shopping') byType.shopping.push(it.id);
+    else byType.daily.push(it.id);
+  }
+
+  const drafts = [];
+  for (const type of ['daily', 'shopping']) {
+    if (!byType[type].length) continue;
+    const materials = takeMaterialsByIds(type, byType[type]);
+    for (const m of materials) {
+      const content = (await generateContent(buildRewritePrompt(type, m.content))).trim();
+      drafts.push(addDraft({ type, content, source: '글감창고(선택 변환)' }));
+    }
+  }
+  pushLog(`[대시보드] 글감 창고에서 선택한 ${drafts.length}개 변환 → [검수] 탭에 추가됨`);
   return drafts;
 }
 
@@ -648,6 +672,7 @@ const PAGE = () => `<!doctype html>
           </table>
           <div class="sub" style="margin-top:10px">글 사이 간격 2시간 · 좋아요 하루 3개 · 피하는 시간대 00~08시</div>
           <div class="sub">쓰레드는 "많이"보다 "꾸준히"가 이깁니다. 하루 1개를 30일 올린 계정이 하루 5개를 6일 올린 계정보다 안전하고 멀리 갑니다.</div>
+          <div class="sub" style="margin-top:6px">부계정만 자동화에 쓰세요 · 스크랩+하트+리트윗(스하리) 같은 어뷰징성 반복 행동은 금지 · 쿠팡 링크는 조회수 3000+일 때만 고정댓글로 다세요.</div>
         </div>
       </div>
 
@@ -902,12 +927,17 @@ const PAGE = () => `<!doctype html>
             <h1>📦 글감 창고</h1>
             <button class="secondary" id="ideasRefreshBtn">🔄 새로고침</button>
           </div>
-          <div class="sub">[직접 소싱(커스텀)]에서 원본 수집한 글감이 여기 쌓여요. "바로쓰기"에서 쓴(사용됨) 것도 계속 보여요 — 지우려면 [버리기]를 누르세요.</div>
+          <div class="sub">누르면 원본 글이 열립니다 · 변환은 체크 후 [🔥 선택 N개 변환] · 나쁜 글감은 체크해서 버리세요. 새로 모으는 버튼은 일상글 올리기·쇼핑글 올리기 탭에 있습니다.</div>
           <div class="actions" style="margin-top:8px">
             <button class="secondary" id="ideasFilterAll">전체</button>
             <button class="secondary" id="ideasFilterDaily">일상</button>
-            <button class="secondary" id="ideasFilterShopping">쇼핑</button>
+            <button class="secondary" id="ideasFilterShopping">쿠파스</button>
           </div>
+          <div class="actions" style="margin-top:8px">
+            <button id="ideasConvertSelectedBtn" style="background:#f59e0b">🔥 선택 0개 변환</button>
+            <button class="secondary" id="ideasDeleteSelectedBtn" style="color:#dc2626;border-color:#fca5a5">선택 버리기</button>
+          </div>
+          <div id="ideasMsg" style="font-size:12px;color:#6d28d9;margin-top:4px;min-height:16px"></div>
           <div id="ideasList" style="margin-top:10px"></div>
         </div>
       </div>
@@ -973,6 +1003,7 @@ const PAGE = () => `<!doctype html>
         <div class="card" style="max-width:720px">
           <h1>🎭 페르소나</h1>
           <div class="sub">글을 쓰는 말투를 정하는 곳이에요. 아무것도 안 하면 기본 말투로 써요. 닮고 싶은 계정이 있으면 링크를 넣으세요 — 글을 읽어 말투를 분석한 뒤 그대로 씁니다.</div>
+          <div class="sub">페르소나는 말투만 바꿉니다. 사별·폭력·정치·주식·병원 같은 민감 소재는 페르소나와 무관하게 원본 수집 단계에서 항상 걸러져요.</div>
         </div>
 
         <div class="card" style="max-width:720px">
@@ -1776,6 +1807,11 @@ const PAGE = () => `<!doctype html>
 
     // ---- 글감 창고 ----
     let ideasFilter = 'all';
+    let ideasExpanded = new Set();
+    window.__ideasSelected = new Map(); // id -> type
+    function updateIdeasConvertBtnLabel() {
+      document.getElementById('ideasConvertSelectedBtn').textContent = '🔥 선택 ' + window.__ideasSelected.size + '개 변환';
+    }
     async function loadIdeas() {
       const res = await fetch('/api/materials');
       const data = await res.json();
@@ -1786,27 +1822,89 @@ const PAGE = () => `<!doctype html>
       const filtered = ideasFilter === 'all' ? combined : combined.filter((m) => m.type === ideasFilter);
       const el = document.getElementById('ideasList');
       if (!filtered.length) {
-        el.innerHTML = '<div class="sub">아직 수집된 글이 없습니다 — [직접 소싱(커스텀)]에서 원본 수집을 먼저 하세요.</div>';
+        el.innerHTML = '<div class="sub">아직 수집된 글 없음 — 📥 [일상글/쇼핑글 올리기] 탭에서 수집 시작</div>';
+        updateIdeasConvertBtnLabel();
         return;
       }
-      el.innerHTML = filtered.map((m) => (
-        '<div class="checkitem"><div class="ci-title">' + (m.type === 'shopping' ? '🛒 쇼핑' : '💬 일상') + (m.used ? ' · 사용됨' : ' · 안 씀') + '</div>' +
-        '<div class="ci-desc" style="white-space:pre-wrap">' + m.content.replace(/</g, '&lt;').slice(0, 300) + '</div>' +
-        '<div class="actions" style="margin-top:6px"><button class="secondary" data-material-remove="' + m.id + '" data-material-type="' + m.type + '">버리기</button></div></div>'
-      )).join('');
+      el.innerHTML = filtered.map((m) => {
+        const expanded = ideasExpanded.has(m.id);
+        const text = m.content.replace(/</g, '&lt;');
+        return (
+          '<div class="checkitem">' +
+          '<div style="display:flex;gap:8px;align-items:flex-start">' +
+          '<input type="checkbox" data-material-select="' + m.id + '" data-material-type="' + m.type + '"' + (window.__ideasSelected.has(m.id) ? ' checked' : '') + ' style="margin-top:3px" />' +
+          '<div style="flex:1;cursor:pointer" data-material-toggle="' + m.id + '">' +
+          '<div class="ci-title">' + (m.type === 'shopping' ? '🛒 쿠파스' : '💬 일상') + (m.used ? ' · 사용됨' : ' · 안 씀') + '</div>' +
+          '<div class="ci-desc" style="white-space:pre-wrap">' + (expanded ? text : text.slice(0, 200)) + (!expanded && text.length > 200 ? '…' : '') + '</div>' +
+          '</div></div>' +
+          '<div class="actions" style="margin-top:6px"><button class="secondary" data-material-remove="' + m.id + '" data-material-type="' + m.type + '">버리기</button></div></div>'
+        );
+      }).join('');
+      updateIdeasConvertBtnLabel();
     }
     document.getElementById('ideasRefreshBtn').addEventListener('click', loadIdeas);
     document.getElementById('ideasFilterAll').addEventListener('click', () => { ideasFilter = 'all'; loadIdeas(); });
     document.getElementById('ideasFilterDaily').addEventListener('click', () => { ideasFilter = 'daily'; loadIdeas(); });
     document.getElementById('ideasFilterShopping').addEventListener('click', () => { ideasFilter = 'shopping'; loadIdeas(); });
     document.addEventListener('click', async (e) => {
-      const el = e.target.closest('[data-material-remove]');
-      if (!el) return;
-      await fetch('/api/action/materials-remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: el.dataset.materialRemove, type: el.dataset.materialType }),
-      });
+      const toggleEl = e.target.closest('[data-material-toggle]');
+      if (toggleEl) {
+        const id = toggleEl.dataset.materialToggle;
+        if (ideasExpanded.has(id)) ideasExpanded.delete(id); else ideasExpanded.add(id);
+        await loadIdeas();
+        return;
+      }
+      const removeEl = e.target.closest('[data-material-remove]');
+      if (removeEl) {
+        await fetch('/api/action/materials-remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: removeEl.dataset.materialRemove, type: removeEl.dataset.materialType }),
+        });
+        window.__ideasSelected.delete(removeEl.dataset.materialRemove);
+        await loadIdeas();
+      }
+    });
+    document.addEventListener('change', (e) => {
+      const sel = e.target.closest('[data-material-select]');
+      if (!sel) return;
+      if (sel.checked) window.__ideasSelected.set(sel.dataset.materialSelect, sel.dataset.materialType);
+      else window.__ideasSelected.delete(sel.dataset.materialSelect);
+      updateIdeasConvertBtnLabel();
+    });
+    document.getElementById('ideasConvertSelectedBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('ideasMsg');
+      if (!window.__ideasSelected.size) { msgEl.textContent = '❌ 먼저 체크해주세요.'; return; }
+      const items = [...window.__ideasSelected.entries()].map(([id, type]) => ({ id, type }));
+      msgEl.textContent = items.length + '개 변환 중...(몇 초씩 걸려요)';
+      try {
+        const res = await fetch('/api/action/materials-convert-selected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '실패');
+        msgEl.textContent = '✅ [검수] 탭에 ' + data.drafts.length + '개 추가됐어요.';
+        window.__ideasSelected.clear();
+        await loadIdeas();
+      } catch (err) {
+        msgEl.textContent = '❌ ' + err.message;
+      }
+    });
+    document.getElementById('ideasDeleteSelectedBtn').addEventListener('click', async () => {
+      const msgEl = document.getElementById('ideasMsg');
+      if (!window.__ideasSelected.size) { msgEl.textContent = '❌ 먼저 체크해주세요.'; return; }
+      const items = [...window.__ideasSelected.entries()];
+      for (const [id, type] of items) {
+        await fetch('/api/action/materials-remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, type }),
+        });
+      }
+      msgEl.textContent = '✅ ' + items.length + '개 버렸어요.';
+      window.__ideasSelected.clear();
       await loadIdeas();
     });
     document.querySelector('.navitem[data-tab="ideas"]').addEventListener('click', loadIdeas);
@@ -2265,9 +2363,49 @@ const PAGE = () => `<!doctype html>
           '</div>' +
           '</div>'
         );
-      }).join('');
+      }).join('') + (() => {
+        // 계정이 3개 미만이면 원본처럼 "비어 있는 칸" 자리를 sub01/02/03 순서로 보여준다 —
+        // 눌러서 만드는 게 아니라 "연결"만 누르면 바로 로그인창이 뜨고 알아서 등록되는 흐름.
+        const existingLabels = new Set(data.accounts.map((a) => a.label));
+        const slots = [];
+        for (let i = 1; slots.length < Math.max(0, 3 - data.accounts.length) && i <= 9; i++) {
+          const label = 'sub0' + i;
+          if (!existingLabels.has(label)) slots.push(label);
+        }
+        return slots.map((label) => (
+          '<div style="border:1px dashed #ddd;border-radius:8px;padding:10px;margin-bottom:6px;background:#fafafa">' +
+          '<div class="row" style="margin-bottom:4px">' +
+          '<span style="font-size:11px;background:#eee;color:#888;padding:1px 6px;border-radius:4px">' + label + '</span>' +
+          '<span style="font-size:11px;color:#aaa">비어 있는 칸</span>' +
+          '</div>' +
+          '<div class="sub" style="margin:0 0 6px">🔑 연결을 누르면 로그인 창이 뜹니다. 로그인하면 앱이 계정을 알아서 등록합니다.</div>' +
+          '<button data-acct-slot-connect="' + label + '" style="width:100%">🔑 연결</button>' +
+          '</div>'
+        )).join('');
+      })();
     }
     document.addEventListener('click', async (e) => {
+      const slotBtn = e.target.closest('[data-acct-slot-connect]');
+      if (slotBtn) {
+        slotBtn.disabled = true;
+        slotBtn.textContent = '계정 만드는 중...';
+        const addRes = await fetch('/api/action/browser-account-add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: slotBtn.dataset.acctSlotConnect }),
+        });
+        const addData = await addRes.json();
+        const newAccount = addData.accounts[addData.accounts.length - 1];
+        await fetch('/api/action/check-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountId: newAccount.id }),
+        });
+        document.getElementById('acctMsg').textContent = '✅ "' + newAccount.label + '" 계정 만들어짐 — 곧 뜨는 크롬 창에서 로그인하면 끝입니다.';
+        await loadBrowserAccounts();
+        await loadAccountSwitcher();
+        return;
+      }
       const saveBtn = e.target.closest('[data-note-save]');
       if (!saveBtn) return;
       const input = document.querySelector('[data-note-for="' + saveBtn.dataset.noteSave + '"]');
@@ -2520,6 +2658,21 @@ function startDashboard() {
       req.on('end', async () => {
         try {
           const drafts = await handleCustomWriteAction(JSON.parse(body || '{}'));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, drafts }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+    if (req.url === '/api/action/materials-convert-selected' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', async () => {
+        try {
+          const drafts = await handleConvertSelectedMaterialsAction(JSON.parse(body || '{}'));
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, drafts }));
         } catch (err) {
