@@ -375,19 +375,34 @@ async function handleLearnAccountsAction(body) {
   }
   if (!allPosts.length) throw new Error('배울 수 있는 글을 하나도 못 찾았어요.');
 
-  const prompt = `아래는 여러 쓰레드(Threads) 게시물이다. 이 글들의 공통 패턴(훅 종류 2~3가지, 글 구조 2~3가지, 자주 다루는 주제)을 분석해서 앞으로 새 글을 쓸 때 참고할 수 있게 짧게 요약해라. 설명 없이 요약 결과만 출력해라.
+  const prompt = `아래는 여러 쓰레드(Threads) 게시물이다. 이 글들의 공통 패턴을 분석해서, 다음 JSON 형식으로만 출력해라(다른 설명 없이 JSON만):
+{"hooks": ["훅 유형1", "훅 유형2", ...], "structures": ["글 구조1", "글 구조2", ...], "topics": ["자주 다루는 주제1", "주제2", ...], "summary": "훅/구조/말투/주제를 묶은 2~3문장 요약"}
+훅·구조는 2~4개, 주제는 3~6개 정도로 뽑아라.
 
 ${allPosts.map((p, i) => `--- 게시물 ${i + 1} ---\n${p.slice(0, 500)}`).join('\n\n')}`;
-  const summary = (await generateContent(prompt)).trim();
-  const data = { accounts: handles, summary, samplePosts: allPosts.slice(0, 10) };
-  channelClone.save(data);
-  pushLog(`[대시보드] 채널 복제 학습 완료 (${handles.length}개 계정, 게시물 ${allPosts.length}개)`);
-  return data;
+  const raw2 = (await generateContent(prompt)).trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw2.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, ''));
+  } catch {
+    parsed = { hooks: [], structures: [], topics: [], summary: raw2 };
+  }
+  const profile = channelClone.addProfile({
+    accounts: handles,
+    summary: parsed.summary || raw2,
+    samplePosts: allPosts.slice(0, 10),
+    hooks: parsed.hooks || [],
+    structures: parsed.structures || [],
+    topics: parsed.topics || [],
+  });
+  pushLog(`[대시보드] 채널 복제 학습 완료 (${handles.length}개 계정, 게시물 ${allPosts.length}개, 훅 ${profile.hooks.length}종·구조 ${profile.structures.length}종)`);
+  return profile;
 }
 
 async function handleChannelWriteAction(body) {
-  const data = channelClone.load();
-  if (!data.summary) throw new Error('먼저 계정을 배우세요.');
+  const cloneData = channelClone.load();
+  const data = cloneData.profiles.find((p) => p.id === body?.profileId) || cloneData.profiles[cloneData.profiles.length - 1];
+  if (!data) throw new Error('먼저 계정을 배우세요.');
   const count = Math.max(1, Math.min(3, Number(body?.count) || 1));
   const type = body?.type === 'shopping' ? 'shopping' : 'daily';
   const personaNote = persona.load().note;
@@ -997,22 +1012,27 @@ const PAGE = () => `<!doctype html>
       <div class="tab-panel" data-panel="clone">
         <div class="card" style="max-width:720px">
           <h1>🎯 채널 복제 — 이 계정처럼 쓰기</h1>
-          <div class="sub">잘 되는 계정 주소를 넣으면 그 계정의 훅 유형·글 구조·주제를 배워서, 앞으로 쓰는 글이 그 결을 따라가요.</div>
+          <div class="sub">닮고 싶은 계정 주소를 넣으면 그 계정의 훅 유형·글 구조·주제를 배워서, 앞으로 쓰는 글이 그 결을 따라가요. 문장을 그대로 옮기면 신고 대상이 됩니다 — 자리(훅/구조/CTA)만 가져오고 문장은 새로 씁니다.</div>
           <textarea id="cloneAccounts" rows="3" style="width:100%;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:13px;font-family:inherit" placeholder="https://www.threads.com/@계정1&#10;https://www.threads.com/@계정2&#10;@계정3 (한 줄에 하나씩, 최대 5개)"></textarea>
           <div class="actions">
             <button id="cloneLearnBtn">🎯 이 계정들처럼 배우기</button>
-            <button class="secondary" id="cloneResetBtn">초기화</button>
           </div>
+          <div class="sub">3~5개를 함께 넣는 걸 권장합니다. 계정마다 최근 글 30개쯤 훑어 훅·구조·주제를 맞춥니다 — 계정당 1~3분 걸려요.</div>
           <div id="cloneMsg" style="font-size:12px;color:#6d28d9;margin-top:8px;min-height:16px"></div>
         </div>
 
         <div class="card" style="max-width:720px">
-          <h1 style="font-size:14px">📖 배워 둔 것</h1>
-          <div id="cloneSummary" class="sub">아직 배운 계정이 없어요.</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <h1 style="font-size:14px">📖 배워 둔 계정</h1>
+            <button class="secondary" id="cloneResetBtn">전부 끄기</button>
+          </div>
+          <div class="sub">쓸 계정을 골라 두세요 — 고른 결로 아래에서 글을 씁니다.</div>
+          <div id="cloneProfileList">아직 배운 계정이 없어요.</div>
         </div>
 
         <div class="card" style="max-width:720px">
           <h1 style="font-size:14px">✍️ 그 결로 글쓰기</h1>
+          <div class="sub" id="cloneWriteHint">쓸 원본이 없습니다 — 위에서 계정을 먼저 배우고 골라주세요.</div>
           <div class="row">
             <select id="cloneWriteType" style="border:1px solid #ddd;border-radius:8px;padding:9px 8px;font-size:12px">
               <option value="daily">일상글</option>
@@ -1938,12 +1958,35 @@ const PAGE = () => `<!doctype html>
     document.querySelector('.navitem[data-tab="schedule"]').addEventListener('click', loadSchedule);
 
     // ---- 채널 복제 ----
+    window.__selectedCloneProfileId = null;
     async function loadClone() {
       const res = await fetch('/api/channel-clone');
       const data = await res.json();
-      document.getElementById('cloneSummary').textContent = data.summary
-        ? '배운 계정: ' + data.accounts.join(', ') + '\\n\\n' + data.summary
-        : '아직 배운 계정이 없어요.';
+      const listEl = document.getElementById('cloneProfileList');
+      const hintEl = document.getElementById('cloneWriteHint');
+      if (!data.profiles.length) {
+        listEl.textContent = '아직 배운 계정이 없어요.';
+        hintEl.textContent = '쓸 원본이 없습니다 — 위에서 계정을 먼저 배우고 골라주세요.';
+        return;
+      }
+      if (window.__selectedCloneProfileId && !data.profiles.some((p) => p.id === window.__selectedCloneProfileId)) {
+        window.__selectedCloneProfileId = null;
+      }
+      listEl.innerHTML = data.profiles.map((p) => {
+        const isSelected = window.__selectedCloneProfileId === p.id;
+        return (
+          '<div class="checkitem ' + (isSelected ? 'ok' : '') + '">' +
+          '<div class="ci-title">' + p.accounts.map((a) => '@' + a.replace(/^https?:\\/\\/[^/]+\\/@?/, '').replace(/^@/, '')).join(', ') + '</div>' +
+          '<div class="ci-desc">훅 ' + p.hooks.length + '종 · 구조 ' + p.structures.length + '종 · 주제 ' + p.topics.length + '개 · 표본 ' + p.samplePosts.length + '개</div>' +
+          '<div class="ci-desc">' + p.summary.replace(/</g, '&lt;').slice(0, 200) + '</div>' +
+          '<div class="row" style="margin-top:6px">' +
+          '<button data-clone-select="' + p.id + '"' + (isSelected ? ' disabled' : '') + '>' + (isSelected ? '✅ 선택됨' : '이 결 쓰기') + '</button>' +
+          '<button class="secondary" data-clone-delete="' + p.id + '">삭제</button>' +
+          '</div></div>'
+        );
+      }).join('');
+      const active = data.profiles.find((p) => p.id === window.__selectedCloneProfileId) || data.profiles[data.profiles.length - 1];
+      hintEl.textContent = '지금 이 결로 씁니다: ' + active.accounts.join(', ') + (window.__selectedCloneProfileId ? '' : ' (가장 최근에 배운 것 — 아직 직접 고르지 않음)');
     }
     document.getElementById('cloneLearnBtn').addEventListener('click', async () => {
       const accounts = document.getElementById('cloneAccounts').value.trim();
@@ -1961,6 +2004,7 @@ const PAGE = () => `<!doctype html>
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
         msgEl.textContent = '✅ 배우기 완료!';
+        document.getElementById('cloneAccounts').value = '';
         await loadClone();
       } catch (err) {
         msgEl.textContent = '❌ ' + err.message;
@@ -1969,8 +2013,25 @@ const PAGE = () => `<!doctype html>
       }
     });
     document.getElementById('cloneResetBtn').addEventListener('click', async () => {
-      await fetch('/api/action/clone-reset', { method: 'POST' });
+      window.__selectedCloneProfileId = null;
       await loadClone();
+    });
+    document.addEventListener('click', async (e) => {
+      const selBtn = e.target.closest('[data-clone-select]');
+      if (selBtn) {
+        window.__selectedCloneProfileId = selBtn.dataset.cloneSelect;
+        await loadClone();
+        return;
+      }
+      const delBtn = e.target.closest('[data-clone-delete]');
+      if (delBtn) {
+        await fetch('/api/action/clone-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: delBtn.dataset.cloneDelete }),
+        });
+        await loadClone();
+      }
     });
     document.getElementById('cloneWriteBtn').addEventListener('click', async () => {
       const type = document.getElementById('cloneWriteType').value;
@@ -1983,7 +2044,7 @@ const PAGE = () => `<!doctype html>
         const res = await fetch('/api/action/clone-write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type, count }),
+          body: JSON.stringify({ type, count, profileId: window.__selectedCloneProfileId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '실패');
@@ -2549,10 +2610,20 @@ function startDashboard() {
       });
       return;
     }
-    if (req.url === '/api/action/clone-reset' && req.method === 'POST') {
-      const data = channelClone.reset();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, ...data }));
+    if (req.url === '/api/action/clone-delete' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          const parsed = JSON.parse(body || '{}');
+          const data = channelClone.removeProfile(parsed.id);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ...data }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     if (req.url === '/api/action/schedule-draft' && req.method === 'POST') {
